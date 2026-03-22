@@ -143,6 +143,7 @@ function renderRecentCheckoutSessions(recentCheckouts) {
           <div>Confirmations: <span class="text-white">${session.paymentAttempt.transaction?.conf ?? 0}${session.paymentAttempt.confirmationTarget != null ? ` / ${session.paymentAttempt.confirmationTarget}` : ''}</span></div>
           <div>Transaction ID: <span class="break-all text-white">${session.paymentAttempt.transaction?.txid || '-'}</span></div>
           <div>Memo: <span class="break-all text-white">${session.paymentAttempt.transaction?.memo || session.paymentAttempt.instructions?.memo || '-'}</span></div>
+          ${session.paymentAttempt.rateLimitedUntil ? `<div>Rate limited until: <span class="text-amber-300">${formatDateTime(session.paymentAttempt.rateLimitedUntil)}</span></div>` : ''}
           ${session.paymentAttempt.instructions?.invoiceRequest ? `<div>Invoice: <span class="break-all text-white">${session.paymentAttempt.instructions.invoiceRequest}</span></div>` : ''}
         ` : '<div>No payment attempt yet.</div>'}
       </div>
@@ -173,6 +174,9 @@ function renderPaymentStatus(containerId, {
   const note = instructions.note || null;
   const network = instructions.network || null;
   const contract = transaction?.contract || instructions.contract || null;
+  const rateLimitedUntil = attempt.rateLimitedUntil || null;
+  const lastErrorCode = attempt.lastErrorCode || null;
+  const lastError = attempt.lastError || null;
   const timeoutMessage = attempt.expiresAt
     ? statusLabel === 'Failed'
       ? `Payment expired at ${formatDateTime(attempt.expiresAt)}.`
@@ -192,6 +196,8 @@ function renderPaymentStatus(containerId, {
       <div class="pt-2 text-white">Current status: ${statusLabel}</div>
       ${confirmationTarget != null ? `<div>Confirmations: ${currentConfirmations} / ${confirmationTarget}</div>` : ''}
       ${txid ? `<div>Transaction ID: <span class="break-all">${txid}</span></div>` : ''}
+      ${rateLimitedUntil ? `<div class="text-amber-300">Chain API rate limited. Retry after ${formatDateTime(rateLimitedUntil)}.${lastErrorCode ? ` Code: ${lastErrorCode}.` : ''}</div>` : ''}
+      ${!rateLimitedUntil && lastError ? `<div class="text-amber-300">Last check error: ${lastError}</div>` : ''}
       ${timeoutMessage ? `<div>${timeoutMessage}</div>` : ''}
       <button id="${refreshButtonId}" class="mt-3 rounded-full border border-accent/30 px-4 py-2 text-accent">Refresh status</button>
     </div>

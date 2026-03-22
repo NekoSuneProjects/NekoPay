@@ -17,6 +17,9 @@ function isHandledByWorker(attempt) {
   if (!['pending', 'awaiting_transfer'].includes(String(attempt.status || '').toLowerCase())) {
     return false;
   }
+  if (attempt.rateLimitedUntil && new Date(attempt.rateLimitedUntil).getTime() > Date.now()) {
+    return false;
+  }
 
   if (attempt.methodId === 'nowpayments') return true;
   if (attempt.methodId === 'zbd') return true;

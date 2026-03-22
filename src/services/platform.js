@@ -23,6 +23,7 @@ const { quoteSatsFromFiat, createZbdCharge } = require('./zbd');
 
 const CRYPTO_PAYMENT_MIN_CONFIRMATIONS = Number(process.env.CRYPTO_PAYMENT_MIN_CONFIRMATIONS || 200);
 const CRYPTO_PAYMENT_TIMEOUT_MINUTES = Number(process.env.CRYPTO_PAYMENT_TIMEOUT_MINUTES || 20);
+const RATE_LIMIT_COOLDOWN_MS = Number(process.env.CHAIN_RATE_LIMIT_COOLDOWN_MS || 120000);
 
 const chainModules = {
   hive: HIVEModule,
@@ -245,6 +246,29 @@ function isAttemptExpired(attempt) {
   return Boolean(attempt?.expiresAt) && new Date(attempt.expiresAt).getTime() <= Date.now();
 }
 
+function isAttemptCoolingDown(attempt) {
+  return Boolean(attempt?.rateLimitedUntil) && new Date(attempt.rateLimitedUntil).getTime() > Date.now();
+}
+
+function isRateLimitError(error) {
+  const status = Number(error?.response?.status || 0);
+  const message = String(error?.message || '').toLowerCase();
+  return status === 429
+    || status === 403
+    || message.includes('rate limit')
+    || message.includes('too many requests');
+}
+
+async function markAttemptRateLimited(attempt, error) {
+  return updatePaymentAttempt(attempt.id, () => ({
+    status: 'pending',
+    rateLimited: true,
+    rateLimitedUntil: new Date(Date.now() + RATE_LIMIT_COOLDOWN_MS).toISOString(),
+    lastError: error?.message || 'Rate limited by upstream API',
+    lastErrorCode: Number(error?.response?.status || 429)
+  }));
+}
+
 function getZbdReceiverConfig(wallets = {}) {
   const requested = String(wallets.zbdReceiverType || '').trim().toLowerCase();
   const normalized = ['lightningaddress', 'lnaddress', 'ln-address'].includes(requested)
@@ -330,6 +354,8 @@ function attachPaymentAttempt(entity, attempt) {
 async function updatePaymentAttempt(attemptId, updater) {
   return updateBy('paymentAttempts', (item) => item.id === attemptId, (item) => ({
     ...item,
+    rateLimited: false,
+    rateLimitedUntil: null,
     ...updater(item),
     updatedAt: new Date().toISOString()
   }));
@@ -1082,6 +1108,7 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
 async function refreshHostedCheckoutStatus(store, session) {
   let attempt = await getBy('paymentAttempts', (item) => item.checkoutSessionId === session.id);
   if (!attempt) return attachPaymentAttempt(session, null);
+  if (isAttemptCoolingDown(attempt)) return attachPaymentAttempt(session, attempt);
 
   if (attempt.methodId === 'nowpayments') {
     const config = decryptStoreConfig(store);
@@ -1139,7 +1166,16 @@ async function refreshHostedCheckoutStatus(store, session) {
       return attachPaymentAttempt(failed, attempt);
     }
 
-    const tx = await checkSupportedOnchainTransaction(attempt, session.createdAt);
+    let tx;
+    try {
+      tx = await checkSupportedOnchainTransaction(attempt, session.createdAt);
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        attempt = await markAttemptRateLimited(attempt, error);
+        return attachPaymentAttempt(session, attempt);
+      }
+      throw error;
+    }
     attempt = await updatePaymentAttempt(attempt.id, () => ({
       status: tx.exists ? 'completed' : 'pending',
       transaction: tx.conf !== '' ? {
@@ -1181,6 +1217,7 @@ async function checkManualPaymentStatus(store, order, attempt) {
   }
 
   if (!getTokenConfig(attempt.methodId)) return null;
+  if (isAttemptCoolingDown(attempt)) return attempt;
   if (isAttemptExpired(attempt)) {
     await updatePaymentAttempt(attempt.id, () => ({ status: 'failed' }));
     await updateBy('orders', (item) => item.id === order.id, (item) => ({
@@ -1190,7 +1227,15 @@ async function checkManualPaymentStatus(store, order, attempt) {
     }));
     return null;
   }
-  const tx = await checkSupportedOnchainTransaction(attempt, order.createdAt);
+  let tx;
+  try {
+    tx = await checkSupportedOnchainTransaction(attempt, order.createdAt);
+  } catch (error) {
+    if (isRateLimitError(error)) {
+      return markAttemptRateLimited(attempt, error);
+    }
+    throw error;
+  }
   const updatedAttempt = await updatePaymentAttempt(attempt.id, () => ({
     status: tx.exists ? 'completed' : 'pending',
     transaction: tx.conf !== '' ? {
