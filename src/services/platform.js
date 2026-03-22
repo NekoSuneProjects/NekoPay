@@ -386,6 +386,23 @@ function isAttemptTerminal(attempt) {
   return ['completed', 'failed', 'cancelled'].includes(String(attempt?.status || '').toLowerCase());
 }
 
+function isAttemptReusable(attempt) {
+  if (!attempt || isAttemptTerminal(attempt)) {
+    return false;
+  }
+
+  const methodId = String(attempt.methodId || '').toLowerCase();
+  if (['stripe', 'paypal', 'nowpayments'].includes(methodId)) {
+    return Boolean(attempt.redirectUrl);
+  }
+
+  if (methodId === 'zbd') {
+    return Boolean(attempt.instructions?.invoiceRequest || attempt.instructions?.address);
+  }
+
+  return true;
+}
+
 function scorePaymentAttempt(attempt) {
   const status = String(attempt?.status || '').toLowerCase();
   const hasTxid = Boolean(attempt?.transaction?.txid);
@@ -442,14 +459,14 @@ async function getReusableCheckoutAttempt(checkoutSessionId, methodId) {
   const attempts = (await list('paymentAttempts'))
     .filter((attempt) => attempt.checkoutSessionId === checkoutSessionId && attempt.methodId === methodId)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-  return attempts.find((attempt) => !isAttemptTerminal(attempt)) || null;
+  return attempts.find((attempt) => isAttemptReusable(attempt)) || null;
 }
 
 async function getReusableOrderAttempt(orderId, methodId) {
   const attempts = (await list('paymentAttempts'))
     .filter((attempt) => attempt.orderId === orderId && attempt.methodId === methodId)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-  return attempts.find((attempt) => !isAttemptTerminal(attempt)) || null;
+  return attempts.find((attempt) => isAttemptReusable(attempt)) || null;
 }
 
 async function createStoreForUser(user, payload = {}) {
@@ -919,6 +936,10 @@ async function createPaymentAttempt(store, order, methodId, req) {
     throw new Error('Unsupported payment method');
   }
 
+  if (['stripe', 'paypal', 'nowpayments'].includes(normalized) && !payment?.redirectUrl) {
+    throw new Error(`${normalized.toUpperCase()} did not return a checkout redirect URL`);
+  }
+
   const attempt = {
     id: randomId('pay_'),
     orderId: order.id,
@@ -1115,6 +1136,10 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
     );
   } else {
     throw new Error('Unsupported payment method');
+  }
+
+  if (['stripe', 'paypal', 'nowpayments'].includes(normalized) && !payment?.redirectUrl) {
+    throw new Error(`${normalized.toUpperCase()} did not return a checkout redirect URL`);
   }
 
   const attempt = {
