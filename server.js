@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const os = require('os');
 const path = require('path');
 const axios = require('axios');
 const cookieParser = require('cookie-parser');
@@ -59,6 +60,24 @@ function setSessionCookie(res, token) {
 
 function clearSessionCookie(res) {
   res.clearCookie(SESSION_COOKIE);
+}
+
+function getListeningUrls(port) {
+  const urls = new Set([
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`
+  ]);
+
+  const interfaces = os.networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (!entry || entry.internal) continue;
+      if (entry.family !== 'IPv4' && entry.family !== 4) continue;
+      urls.add(`http://${entry.address}:${port}`);
+    }
+  }
+
+  return [...urls];
 }
 
 function normalizeUser(user) {
@@ -950,7 +969,10 @@ let keepAliveTimer = null;
 
 seedAdminIfNeeded().then(() => {
   server = app.listen(port, () => {
-    console.log(`NekoPay listening on http://localhost:${port}`);
+    console.log('NekoPay listening on:');
+    for (const url of getListeningUrls(port)) {
+      console.log(`- ${url}`);
+    }
   });
   startBackgroundWorker();
   keepAliveTimer = setInterval(() => {}, 60 * 60 * 1000);
