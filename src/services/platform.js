@@ -335,6 +335,63 @@ async function updatePaymentAttempt(attemptId, updater) {
   }));
 }
 
+async function listPaymentAttemptsForStore(storeId) {
+  return (await list('paymentAttempts'))
+    .filter((attempt) => attempt.storeId === storeId)
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+}
+
+function isAttemptTerminal(attempt) {
+  return ['completed', 'failed', 'cancelled'].includes(String(attempt?.status || '').toLowerCase());
+}
+
+function scorePaymentAttempt(attempt) {
+  const status = String(attempt?.status || '').toLowerCase();
+  const hasTxid = Boolean(attempt?.transaction?.txid);
+  const conf = Number(attempt?.transaction?.conf || 0);
+  if (status === 'completed') return 1000000 + conf;
+  if (hasTxid) return 500000 + conf;
+  if (conf > 0) return 400000 + conf;
+  if (status === 'pending') return 100000;
+  return 0;
+}
+
+function pickBestPaymentAttempt(attempts = []) {
+  return [...attempts].sort((left, right) => {
+    const scoreDiff = scorePaymentAttempt(right) - scorePaymentAttempt(left);
+    if (scoreDiff !== 0) return scoreDiff;
+    return new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0);
+  })[0] || null;
+}
+
+async function getLatestPaymentAttemptForCheckout(checkoutSessionId) {
+  const attempts = (await list('paymentAttempts'))
+    .filter((attempt) => attempt.checkoutSessionId === checkoutSessionId)
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+  return pickBestPaymentAttempt(attempts);
+}
+
+async function getLatestPaymentAttemptForOrder(orderId) {
+  const attempts = (await list('paymentAttempts'))
+    .filter((attempt) => attempt.orderId === orderId)
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+  return pickBestPaymentAttempt(attempts);
+}
+
+async function getReusableCheckoutAttempt(checkoutSessionId, methodId) {
+  const attempts = (await list('paymentAttempts'))
+    .filter((attempt) => attempt.checkoutSessionId === checkoutSessionId && attempt.methodId === methodId)
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+  return attempts.find((attempt) => !isAttemptTerminal(attempt)) || null;
+}
+
+async function getReusableOrderAttempt(orderId, methodId) {
+  const attempts = (await list('paymentAttempts'))
+    .filter((attempt) => attempt.orderId === orderId && attempt.methodId === methodId)
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+  return attempts.find((attempt) => !isAttemptTerminal(attempt)) || null;
+}
+
 async function createStoreForUser(user, payload = {}) {
   const slug = slugify(payload.slug || payload.name || `${user.name}-store`) || `store-${randomDigits(5)}`;
   const existing = await getBy('stores', (store) => store.slug === slug);
@@ -626,6 +683,10 @@ async function createPaymentAttempt(store, order, methodId, req) {
   const config = decryptStoreConfig(store);
   let payment = null;
   const normalized = String(methodId || '').toLowerCase();
+  const existingAttempt = await getReusableOrderAttempt(order.id, normalized);
+  if (existingAttempt) {
+    return existingAttempt;
+  }
   const attemptTiming = normalized === 'zbd'
     ? {
         confirmationTarget: null,
@@ -819,6 +880,10 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
   }
   const config = decryptStoreConfig(store);
   const normalized = String(methodId || '').toLowerCase();
+  const existingAttempt = await getReusableCheckoutAttempt(session.id, normalized);
+  if (existingAttempt) {
+    return existingAttempt;
+  }
   const attemptTiming = normalized === 'zbd'
     ? {
         confirmationTarget: null,
@@ -1204,6 +1269,8 @@ module.exports = {
   refreshHostedCheckoutStatus,
   createPublicOrder,
   createPaymentAttempt,
+  getLatestPaymentAttemptForCheckout,
+  getLatestPaymentAttemptForOrder,
   checkManualPaymentStatus,
   checkNowPaymentsStatus,
   verifyNowPaymentsSignature

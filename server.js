@@ -9,7 +9,7 @@ const { SESSION_COOKIE, createUser, createVerificationToken, verifyEmailToken, l
 const { requireAuth, requireAdmin } = require('./src/middleware/auth');
 const { platformName, supportedCurrencies, supportedTokens, defaultProducts } = require('./src/config/platform');
 const { convertAmount } = require('./src/services/pricing');
-const { sanitizeStore, createStoreForUser, getStoreByOwner, getStoresByOwner, getStoreBySlug, getStoreByHookId, getStoreBySecretApiKey, rotateStoreApiKey, updateStore, listStoresForUser, createIssue, createHostedCheckoutSession, listHostedCheckoutSessions, getHostedCheckoutSession, markHostedCheckoutSessionStatus, createHostedCheckoutPayment, refreshHostedCheckoutStatus, createPublicOrder, createPaymentAttempt, checkManualPaymentStatus, checkNowPaymentsStatus, verifyNowPaymentsSignature, decryptStoreConfig } = require('./src/services/platform');
+const { sanitizeStore, createStoreForUser, getStoreByOwner, getStoresByOwner, getStoreBySlug, getStoreByHookId, getStoreBySecretApiKey, rotateStoreApiKey, updateStore, listStoresForUser, createIssue, createHostedCheckoutSession, listHostedCheckoutSessions, getHostedCheckoutSession, markHostedCheckoutSessionStatus, createHostedCheckoutPayment, refreshHostedCheckoutStatus, createPublicOrder, createPaymentAttempt, getLatestPaymentAttemptForCheckout, getLatestPaymentAttemptForOrder, checkManualPaymentStatus, checkNowPaymentsStatus, verifyNowPaymentsSignature, decryptStoreConfig } = require('./src/services/platform');
 const { startBackgroundWorker, stopBackgroundWorker } = require('./src/services/background-worker');
 
 const app = express();
@@ -552,7 +552,18 @@ app.get('/api/dashboard/summary', requireAuth, async (req, res) => {
       .reverse()
       .map((session) => ({
         ...session,
-        paymentAttempt: paymentAttempts.find((attempt) => attempt.checkoutSessionId === session.id) || null
+        paymentAttempt: paymentAttempts
+          .filter((attempt) => attempt.checkoutSessionId === session.id)
+          .sort((left, right) => {
+            const leftScore = (String(left.status || '').toLowerCase() === 'completed' ? 1000000 : 0)
+              + (left.transaction?.txid ? 500000 : 0)
+              + Number(left.transaction?.conf || 0);
+            const rightScore = (String(right.status || '').toLowerCase() === 'completed' ? 1000000 : 0)
+              + (right.transaction?.txid ? 500000 : 0)
+              + Number(right.transaction?.conf || 0);
+            if (rightScore !== leftScore) return rightScore - leftScore;
+            return new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0);
+          })[0] || null
       })),
     recentOrders: orders.slice(-10).reverse(),
     issues: issues.slice(-10).reverse()
@@ -817,7 +828,7 @@ app.get('/api/public/checkout-sessions/:sessionId/status', async (req, res) => {
     if (!session) {
       return res.status(404).json({ error: 'Checkout session not found' });
     }
-    const attempt = await getBy('paymentAttempts', (item) => item.checkoutSessionId === session.id);
+    const attempt = await getLatestPaymentAttemptForCheckout(session.id);
     res.json({
       ...session,
       paymentAttempt: attempt || null
@@ -879,7 +890,7 @@ app.get('/api/public/orders/:orderId/status', async (req, res) => {
     }
 
     const refreshed = await getBy('orders', (item) => item.id === order.id);
-    const refreshedAttempt = await getBy('paymentAttempts', (item) => item.orderId === order.id);
+    const refreshedAttempt = await getLatestPaymentAttemptForOrder(order.id);
     res.json({
       ...refreshed,
       paymentAttempt: refreshedAttempt || null
