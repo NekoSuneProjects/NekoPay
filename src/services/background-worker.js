@@ -21,6 +21,8 @@ function isHandledByWorker(attempt) {
     return false;
   }
 
+  if (attempt.methodId === 'stripe') return true;
+  if (attempt.methodId === 'paypal') return true;
   if (attempt.methodId === 'nowpayments') return true;
   if (attempt.methodId === 'zbd') return true;
   if (supportedTokens[attempt.methodId] && supportedTokens[attempt.methodId].enabled !== false) return true;

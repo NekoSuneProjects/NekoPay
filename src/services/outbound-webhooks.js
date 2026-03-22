@@ -30,7 +30,13 @@ async function sendMerchantWebhook(session, status, event, extra = {}) {
   try {
     const response = await axios.post(session.notificationUrl, payload, {
       timeout: 15000,
-      headers: { 'Content-Type': 'application/json' }
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session.notificationSecret ? {
+          Authorization: `Bearer ${session.notificationSecret}`,
+          'x-nekopay-webhook-secret': session.notificationSecret
+        } : {})
+      }
     });
 
     await append('events', {

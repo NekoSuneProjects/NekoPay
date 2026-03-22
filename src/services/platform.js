@@ -635,6 +635,7 @@ async function createHostedCheckoutSession(store, payload = {}) {
     currency: String(payload.currency || store.defaultCurrency).toUpperCase(),
     displayCurrency: String(payload.displayCurrency || payload.currency || store.defaultCurrency).toUpperCase(),
     notificationUrl: payload.notificationUrl || payload.webhookUrl || '',
+    notificationSecret: payload.notificationSecret || payload.webhookSecret || '',
     successUrl: payload.successUrl || '',
     cancelUrl: payload.cancelUrl || '',
     customer: payload.customer || {},
@@ -772,10 +773,21 @@ async function createPaymentAttempt(store, order, methodId, req) {
     };
   } else if (normalized === 'paypal') {
     const authToken = Buffer.from(`${config.secrets.paypalClientId}:${config.secrets.paypalClientSecret}`).toString('base64');
+    const returnUrl = `${appBaseUrl}/paypal/return?orderId=${encodeURIComponent(order.id)}`;
+    const cancelUrl = `${appBaseUrl}/paypal/cancel?orderId=${encodeURIComponent(order.id)}`;
     const { data } = await axios.post(
       'https://api-m.paypal.com/v2/checkout/orders',
       {
         intent: 'CAPTURE',
+        payment_source: {
+          paypal: {
+            experience_context: {
+              user_action: 'PAY_NOW',
+              return_url: returnUrl,
+              cancel_url: cancelUrl
+            }
+          }
+        },
         purchase_units: [
           {
             amount: {
@@ -972,8 +984,19 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
     };
   } else if (normalized === 'paypal') {
     const authToken = Buffer.from(`${config.secrets.paypalClientId}:${config.secrets.paypalClientSecret}`).toString('base64');
+    const returnUrl = `${appBaseUrl}/paypal/return?checkoutSessionId=${encodeURIComponent(session.id)}`;
+    const cancelUrl = `${appBaseUrl}/paypal/cancel?checkoutSessionId=${encodeURIComponent(session.id)}`;
     const { data } = await axios.post('https://api-m.paypal.com/v2/checkout/orders', {
       intent: 'CAPTURE',
+      payment_source: {
+        paypal: {
+          experience_context: {
+            user_action: 'PAY_NOW',
+            return_url: returnUrl,
+            cancel_url: cancelUrl
+          }
+        }
+      },
       purchase_units: [{
         amount: {
           currency_code: session.currency,
@@ -1109,6 +1132,61 @@ async function refreshHostedCheckoutStatus(store, session) {
   let attempt = await getBy('paymentAttempts', (item) => item.checkoutSessionId === session.id);
   if (!attempt) return attachPaymentAttempt(session, null);
   if (isAttemptCoolingDown(attempt)) return attachPaymentAttempt(session, attempt);
+
+  if (attempt.methodId === 'stripe') {
+    const config = decryptStoreConfig(store);
+    const stripe = new Stripe(config.secrets.stripeSecretKey);
+    const checkout = await stripe.checkout.sessions.retrieve(attempt.providerReference, {
+      expand: ['payment_intent']
+    });
+    const paymentStatus = String(checkout.payment_status || '').toLowerCase();
+    const checkoutStatus = String(checkout.status || '').toLowerCase();
+
+    if (paymentStatus === 'paid' || checkoutStatus === 'complete') {
+      const paymentIntentId = typeof checkout.payment_intent === 'string'
+        ? checkout.payment_intent
+        : checkout.payment_intent?.id || null;
+      const updated = await markHostedCheckoutSessionStatus(session.id, 'Completed', {
+        ...(session.payment || {}),
+        methodId: 'stripe',
+        providerReference: checkout.id,
+        transaction: {
+          txid: paymentIntentId || checkout.id,
+          conf: null,
+          address: null,
+          amount: session.amount,
+          currency: session.currency,
+          memo: null
+        }
+      });
+      attempt = await updatePaymentAttempt(attempt.id, () => ({
+        status: 'completed',
+        transaction: {
+          txid: paymentIntentId || checkout.id,
+          conf: null,
+          address: null,
+          amount: session.amount,
+          currency: session.currency,
+          memo: null
+        }
+      }));
+      await sendMerchantWebhook(updated, 'Completed', 'checkout.completed', { payment: updated.payment });
+      return attachPaymentAttempt(updated, attempt);
+    }
+
+    if (checkoutStatus === 'expired') {
+      attempt = await updatePaymentAttempt(attempt.id, () => ({ status: 'failed' }));
+      const failed = await markHostedCheckoutSessionStatus(session.id, 'Failed', {
+        ...(session.payment || {}),
+        methodId: 'stripe',
+        providerReference: attempt.providerReference
+      });
+      await sendMerchantWebhook(failed, 'Failed', 'checkout.failed', { payment: failed.payment });
+      return attachPaymentAttempt(failed, attempt);
+    }
+
+    return attachPaymentAttempt(session, attempt);
+  }
 
   if (attempt.methodId === 'nowpayments') {
     const config = decryptStoreConfig(store);

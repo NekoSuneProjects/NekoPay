@@ -93,6 +93,12 @@ function normalizeUser(user) {
   };
 }
 
+function sanitizeCheckoutSession(session) {
+  if (!session) return null;
+  const { notificationSecret, ...safeSession } = session;
+  return safeSession;
+}
+
 async function getStoreForRequestSecret(req) {
   const auth = req.headers.authorization || '';
   if (!auth.startsWith('Bearer ')) return null;
@@ -209,6 +215,63 @@ async function markPaypalAttemptStatus(orderId, status, extra = {}) {
   }
 
   return nextAttempt;
+}
+
+async function getPaypalAttemptByReference(orderId, query = {}) {
+  const token = String(orderId || query.token || '').trim();
+  if (!token) {
+    return null;
+  }
+
+  const directAttempt = await getBy(
+    'paymentAttempts',
+    (item) => item.providerReference === token && item.methodId === 'paypal'
+  );
+  if (directAttempt) {
+    return directAttempt;
+  }
+
+  if (query.checkoutSessionId) {
+    return getBy(
+      'paymentAttempts',
+      (item) => item.checkoutSessionId === String(query.checkoutSessionId) && item.methodId === 'paypal'
+    );
+  }
+
+  if (query.orderId) {
+    return getBy(
+      'paymentAttempts',
+      (item) => item.orderId === String(query.orderId) && item.methodId === 'paypal'
+    );
+  }
+
+  return null;
+}
+
+async function resolvePaypalRedirect(attempt, outcome = 'success') {
+  if (!attempt) {
+    return '/';
+  }
+
+  if (attempt.checkoutSessionId) {
+    const session = await getHostedCheckoutSession(attempt.checkoutSessionId);
+    if (session) {
+      if (outcome === 'success') {
+        return session.successUrl || `/pay/${session.id}?result=success`;
+      }
+      return session.cancelUrl || `/pay/${session.id}?result=cancelled`;
+    }
+  }
+
+  if (attempt.orderId) {
+    const order = await getBy('orders', (item) => item.id === attempt.orderId);
+    const store = await getBy('stores', (item) => item.id === attempt.storeId);
+    if (order && store) {
+      return `/s/${store.slug}?orderId=${order.id}&result=${outcome === 'success' ? 'success' : 'cancelled'}`;
+    }
+  }
+
+  return '/';
 }
 
 async function markZbdAttemptStatus(internalId, status, extra = {}) {
@@ -407,6 +470,60 @@ app.post('/webhooks/paypal/:hookId', express.json(), async (req, res) => {
     res.json({ received: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/paypal/return', async (req, res) => {
+  try {
+    const paypalOrderId = String(req.query.token || '').trim();
+    const attempt = await getPaypalAttemptByReference(paypalOrderId, req.query);
+    if (!attempt) {
+      return res.redirect('/');
+    }
+
+    const store = await getBy('stores', (item) => item.id === attempt.storeId);
+    if (!store) {
+      return res.redirect(await resolvePaypalRedirect(attempt, 'cancel'));
+    }
+
+    const capture = await capturePaypalOrder(store, attempt.providerReference);
+    const captureId = capture?.purchase_units?.[0]?.payments?.captures?.[0]?.id || null;
+    await markPaypalAttemptStatus(attempt.providerReference, 'completed', { captureId });
+    return res.redirect(await resolvePaypalRedirect(attempt, 'success'));
+  } catch (error) {
+    try {
+      const attempt = await getPaypalAttemptByReference(req.query.token, req.query);
+      if (attempt) {
+        await markPaypalAttemptStatus(attempt.providerReference, 'failed');
+        return res.redirect(await resolvePaypalRedirect(attempt, 'cancel'));
+      }
+    } catch (_) {
+      // Ignore redirect fallback failures and use root as final fallback.
+    }
+    return res.redirect('/');
+  }
+});
+
+app.get('/paypal/cancel', async (req, res) => {
+  try {
+    const attempt = await getPaypalAttemptByReference(req.query.token, req.query);
+    if (!attempt) {
+      return res.redirect('/');
+    }
+
+    await updateBy('paymentAttempts', (item) => item.id === attempt.id, (item) => ({
+      ...item,
+      status: 'cancelled',
+      updatedAt: new Date().toISOString()
+    }));
+
+    if (attempt.checkoutSessionId) {
+      await markHostedCheckoutSessionStatus(attempt.checkoutSessionId, 'Cancelled');
+    }
+
+    return res.redirect(await resolvePaypalRedirect(attempt, 'cancel'));
+  } catch (error) {
+    return res.redirect('/');
   }
 });
 
@@ -839,7 +956,7 @@ app.get('/api/public/checkout-sessions/:sessionId', async (req, res) => {
 
   const store = await getBy('stores', (item) => item.id === session.storeId);
   res.json({
-    session,
+    session: sanitizeCheckoutSession(session),
     store: sanitizeStore(store)
   });
 });
@@ -872,7 +989,7 @@ app.get('/api/public/checkout-sessions/:sessionId/status', async (req, res) => {
     }
     const attempt = await getLatestPaymentAttemptForCheckout(session.id);
     res.json({
-      ...session,
+      ...sanitizeCheckoutSession(session),
       paymentAttempt: attempt || null
     });
   } catch (error) {
