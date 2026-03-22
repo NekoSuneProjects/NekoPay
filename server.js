@@ -550,21 +550,44 @@ app.get('/api/dashboard/summary', requireAuth, async (req, res) => {
     recentCheckouts: checkoutSessions
       .slice(-10)
       .reverse()
-      .map((session) => ({
-        ...session,
-        paymentAttempt: paymentAttempts
-          .filter((attempt) => attempt.checkoutSessionId === session.id)
-          .sort((left, right) => {
+      .map((session) => {
+        const attempts = paymentAttempts.filter((attempt) => attempt.checkoutSessionId === session.id);
+        const groups = new Map();
+        for (const attempt of attempts) {
+          const key = attempt.methodId || 'unknown';
+          const current = groups.get(key) || [];
+          current.push(attempt);
+          groups.set(key, current);
+        }
+
+        const merged = [...groups.values()].map((group) => {
+          const sorted = [...group].sort((left, right) => {
             const leftScore = (String(left.status || '').toLowerCase() === 'completed' ? 1000000 : 0)
-              + (left.transaction?.txid ? 500000 : 0)
+              + ((left.transaction?.txid || Number(left.transaction?.conf || 0) > 0) ? 500000 : 0)
               + Number(left.transaction?.conf || 0);
             const rightScore = (String(right.status || '').toLowerCase() === 'completed' ? 1000000 : 0)
-              + (right.transaction?.txid ? 500000 : 0)
+              + ((right.transaction?.txid || Number(right.transaction?.conf || 0) > 0) ? 500000 : 0)
               + Number(right.transaction?.conf || 0);
             if (rightScore !== leftScore) return rightScore - leftScore;
             return new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0);
-          })[0] || null
-      })),
+          });
+          const best = sorted[0];
+          const target = group
+            .map((item) => Number(item.confirmationTarget))
+            .filter((value) => Number.isFinite(value) && value > 0);
+          const txSource = sorted.find((item) => item.transaction && (item.transaction.txid || Number(item.transaction.conf || 0) > 0));
+          return {
+            ...best,
+            confirmationTarget: target.length ? Math.min(...target) : best.confirmationTarget ?? null,
+            transaction: txSource?.transaction || best.transaction || null
+          };
+        }).sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
+
+        return {
+          ...session,
+          paymentAttempt: merged[0] || null
+        };
+      }),
     recentOrders: orders.slice(-10).reverse(),
     issues: issues.slice(-10).reverse()
   });
