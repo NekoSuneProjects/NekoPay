@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NekoPay Hosted Checkout Example</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #081008;
+        --panel: #0f1711;
+        --border: #243226;
+        --text: #ecf8ee;
+        --muted: #8ea08f;
+        --accent: #7ddc5b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(125, 220, 91, 0.18), transparent 28%),
+          linear-gradient(180deg, #050706 0%, var(--bg) 100%);
+      }
+
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+      }
+
+      .hero {
+        margin-bottom: 24px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.24em;
+        font-size: 12px;
+      }
+
+      h1 {
+        margin: 12px 0;
+        font-size: 42px;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .notice {
+        margin: 0 0 18px;
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(125, 220, 91, 0.08);
+        color: #d9f0dd;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .grid {
+        display: grid;
+        gap: 24px;
+        grid-template-columns: 1.2fr 0.8fr;
+      }
+
+      .panel {
+        background: rgba(10, 16, 11, 0.9);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        padding: 24px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 14px;
+      }
+
+      label span {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #091109;
+        color: var(--text);
+      }
+
+      textarea {
+        min-height: 110px;
+        resize: vertical;
+      }
+
+      .row {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .methods {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .methods label {
+        margin: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: #091109;
+        color: var(--text);
+      }
+
+      .methods-group {
+        margin-top: 12px;
+      }
+
+      .methods-title {
+        margin-bottom: 10px;
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      button {
+        border: 0;
+        border-radius: 14px;
+        padding: 16px 18px;
+        background: var(--accent);
+        color: #091109;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #091109;
+        color: #cfe7d2;
+      }
+
+      @media (max-width: 860px) {
+        .grid,
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <div class="eyebrow">Merchant Site Example</div>
+        <h1>NekoPay Hosted Checkout Demo</h1>
+        <p class="muted">
+          This example simulates a merchant website creating a checkout session on your NekoPay server,
+          then redirecting the customer to the hosted checkout page.
+        </p>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <form id="checkoutForm">
+            <label>
+              <span>NekoPay API Base URL</span>
+              <input id="apiBase" value="http://localhost:3000" />
+            </label>
+
+            <label>
+              <span>NekoPay Store Secret API Key</span>
+              <input id="secretKey" placeholder="Paste the NekoPay store secret key: sk_live_..." autocomplete="off" />
+            </label>
+
+            <div class="notice">
+              Use the NekoPay store secret key from the dashboard API key section.
+              Do not use PayPal client ID, PayPal secret, Stripe secret, or webhook secrets here.
+            </div>
+
+            <div class="row">
+              <label>
+                <span>Item Name</span>
+                <input id="itemName" value="VIP Rank" />
+              </label>
+              <label>
+                <span>Amount</span>
+                <input id="amount" type="number" step="0.01" value="12.50" />
+              </label>
+            </div>
+
+            <label>
+              <span>Item Description</span>
+              <input id="itemDescription" value="Gold rank from external site" />
+            </label>
+
+            <div class="row">
+              <label>
+                <span>Currency</span>
+                <input id="currency" value="USD" />
+              </label>
+              <label>
+                <span>External ID</span>
+                <input id="externalId" value="order-12345" />
+              </label>
+            </div>
+
+            <label>
+              <span>Notification URL</span>
+              <input id="notificationUrl" value="https://your-site.com/webhooks/nekopay" />
+            </label>
+
+            <div class="row">
+              <label>
+                <span>Success URL</span>
+                <input id="successUrl" value="https://your-site.com/checkout/success" />
+              </label>
+              <label>
+                <span>Cancel URL</span>
+                <input id="cancelUrl" value="https://your-site.com/checkout/cancel" />
+              </label>
+            </div>
+
+            <label>
+              <span>Allowed Methods</span>
+              <div class="notice" style="margin-top: 10px;">
+                Leave this empty by ticking the checkbox below if you want NekoPay to automatically use all enabled methods from the store gateway config.
+              </div>
+              <label style="margin-bottom: 14px;">
+                <input id="useAllEnabled" type="checkbox" />
+                <span style="display:inline; margin-left:8px; color: var(--text);">Omit <code>allowedMethods</code> and use all enabled methods</span>
+              </label>
+              <div class="methods-group">
+                <div class="methods-title">Card / Provider</div>
+                <div class="methods">
+                  <label><input type="checkbox" name="method" value="stripe" checked /> `stripe`</label>
+                  <label><input type="checkbox" name="method" value="paypal" checked /> `paypal`</label>
+                  <label><input type="checkbox" name="method" value="nowpayments" /> `nowpayments`</label>
+                  <label><input type="checkbox" name="method" value="zbd" /> `zbd`</label>
+                </div>
+              </div>
+              <div class="methods-group">
+                <div class="methods-title">Hive / Steem / Blurt</div>
+                <div class="methods">
+                  <label><input type="checkbox" name="method" value="hive" checked /> `hive`</label>
+                  <label><input type="checkbox" name="method" value="hbd" checked /> `hbd`</label>
+                  <label><input type="checkbox" name="method" value="steem" /> `steem`</label>
+                  <label><input type="checkbox" name="method" value="sbd" /> `sbd`</label>
+                  <label><input type="checkbox" name="method" value="blurt" /> `blurt`</label>
+                </div>
+              </div>
+              <div class="notice" style="margin-top: 14px;">
+                EVM methods are temporarily disabled right now because the explorer API is blocking requests. That currently includes `eth`, `pol`, `bnb`, `myst`, and all `usdt_*` / `usdc_*` EVM variants.
+              </div>
+              <div class="methods-group">
+                <div class="methods-title">Antelope / Other Crypto</div>
+                <div class="methods">
+                  <label><input type="checkbox" name="method" value="tlos" /> `tlos`</label>
+                  <label><input type="checkbox" name="method" value="eos" /> `eos`</label>
+                  <label><input type="checkbox" name="method" value="fio" /> `fio`</label>
+                  <label><input type="checkbox" name="method" value="wax" /> `wax`</label>
+                  <label><input type="checkbox" name="method" value="pivx" /> `pivx`</label>
+                  <label><input type="checkbox" name="method" value="fls" /> `fls`</label>
+                </div>
+              </div>
+            </label>
+
+            <label>
+              <span>Metadata JSON</span>
+              <textarea id="metadata">{
+  "productId": "vip-gold-01",
+  "userId": "42"
+}</textarea>
+            </label>
+
+            <button type="submit">Create Checkout Session</button>
+          </form>
+        </div>
+
+        <div class="panel">
+          <h2>What It Does</h2>
+          <p class="muted">
+            When you click the button, this page sends a `POST` request to:
+          </p>
+          <pre>POST /api/merchant/checkout-sessions</pre>
+
+          <p class="muted" style="margin-top: 18px;">
+            With this auth header:
+          </p>
+          <pre>Authorization: Bearer sk_live_...</pre>
+
+          <p class="muted" style="margin-top: 18px;">
+            If the request succeeds, it redirects the browser to:
+          </p>
+          <pre>session.checkoutUrl</pre>
+
+          <p class="muted" style="margin-top: 18px;">
+            Raw response:
+          </p>
+          <pre id="resultBox">Waiting for request...</pre>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById('checkoutForm');
+      const resultBox = document.getElementById('resultBox');
+      const apiBaseInput = document.getElementById('apiBase');
+      const secretKeyInput = document.getElementById('secretKey');
+      const useAllEnabledInput = document.getElementById('useAllEnabled');
+
+      apiBaseInput.value = localStorage.getItem('nekopay_example_api_base') || apiBaseInput.value;
+      secretKeyInput.value = localStorage.getItem('nekopay_example_secret_key') || '';
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        localStorage.setItem('nekopay_example_api_base', apiBaseInput.value.trim());
+        localStorage.setItem('nekopay_example_secret_key', secretKeyInput.value.trim());
+
+        const selectedMethods = Array.from(
+          document.querySelectorAll('input[name="method"]:checked')
+        ).map((input) => input.value);
+
+        let metadata = {};
+        try {
+          metadata = JSON.parse(document.getElementById('metadata').value || '{}');
+        } catch (error) {
+          resultBox.textContent = `Invalid metadata JSON: ${error.message}`;
+          return;
+        }
+
+        const payload = {
+          itemName: document.getElementById('itemName').value,
+          itemDescription: document.getElementById('itemDescription').value,
+          amount: Number(document.getElementById('amount').value),
+          currency: document.getElementById('currency').value,
+          notificationUrl: document.getElementById('notificationUrl').value,
+          successUrl: document.getElementById('successUrl').value,
+          cancelUrl: document.getElementById('cancelUrl').value,
+          externalId: document.getElementById('externalId').value,
+          metadata,
+          customer: {
+            email: 'customer@example.com',
+            fullName: 'Example Customer',
+            postalCode: 'AB12 3CD'
+          }
+        };
+
+        if (!useAllEnabledInput.checked) {
+          payload.allowedMethods = selectedMethods;
+        }
+
+        try {
+          const response = await fetch(
+            `${apiBaseInput.value.trim()}/api/merchant/checkout-sessions`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${secretKeyInput.value.trim()}`
+              },
+              body: JSON.stringify(payload)
+            }
+          );
+
+          const session = await response.json();
+          resultBox.textContent = JSON.stringify(session, null, 2);
+
+          if (!response.ok) {
+            if (session?.error === 'Invalid API key') {
+              resultBox.textContent = `${JSON.stringify(session, null, 2)}\n\nHint:\nUse the NekoPay store secret API key from the dashboard.\nIf you rotated it, paste the new sk_live_... key here.`;
+            }
+            return;
+          }
+
+          window.location.href = session.checkoutUrl;
+        } catch (error) {
+          resultBox.textContent = error.message;
+        }
+      });
+    </script>
+  </body>
+  </html>

@@ -1,0 +1,30 @@
+{
+  "name": "nekopaymentprocessornode",
+  "version": "1.0.0",
+  "description": "Custom payment processor with Stripe, PayPal, NOWPayments, and explorer-backed crypto modules.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@blurtfoundation/blurtjs": "^1.0.0",
+    "@hiveio/hive-js": "^2.0.8",
+    "@steemit/steem-js": "^0.7.11",
+    "axios": "^1.13.6",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "mysql2": "^3.20.0",
+    "nekosunevr-payments": "github:NekoSuneVR/nekosunevr-payments#betatesting",
+    "nodemailer": "^8.0.3",
+    "sequelize": "^6.37.8",
+    "sqlite3": "^5.1.7",
+    "stripe": "^20.4.1"
+  }
+}
