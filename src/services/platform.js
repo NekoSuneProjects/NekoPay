@@ -282,6 +282,21 @@ function getZbdReceiverConfig(wallets = {}) {
   };
 }
 
+async function getPaypalAccessTokenFromConfig(secrets = {}) {
+  const authToken = Buffer.from(`${secrets.paypalClientId}:${secrets.paypalClientSecret}`).toString('base64');
+  const { data } = await axios.post(
+    'https://api-m.paypal.com/v1/oauth2/token',
+    'grant_type=client_credentials',
+    {
+      headers: {
+        Authorization: `Basic ${authToken}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    }
+  );
+  return data.access_token;
+}
+
 async function buildOnchainPaymentInstructions(store, amount, currency, methodId, referenceId) {
   const config = decryptStoreConfig(store);
   const tokenConfig = getTokenConfig(methodId);
@@ -772,7 +787,7 @@ async function createPaymentAttempt(store, order, methodId, req) {
       providerPayload: session
     };
   } else if (normalized === 'paypal') {
-    const authToken = Buffer.from(`${config.secrets.paypalClientId}:${config.secrets.paypalClientSecret}`).toString('base64');
+    const accessToken = await getPaypalAccessTokenFromConfig(config.secrets);
     const returnUrl = `${appBaseUrl}/paypal/return?orderId=${encodeURIComponent(order.id)}`;
     const cancelUrl = `${appBaseUrl}/paypal/cancel?orderId=${encodeURIComponent(order.id)}`;
     const { data } = await axios.post(
@@ -803,7 +818,7 @@ async function createPaymentAttempt(store, order, methodId, req) {
       },
       {
         headers: {
-          Authorization: `Basic ${authToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         }
       }
@@ -983,7 +998,7 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
       providerPayload: checkout
     };
   } else if (normalized === 'paypal') {
-    const authToken = Buffer.from(`${config.secrets.paypalClientId}:${config.secrets.paypalClientSecret}`).toString('base64');
+    const accessToken = await getPaypalAccessTokenFromConfig(config.secrets);
     const returnUrl = `${appBaseUrl}/paypal/return?checkoutSessionId=${encodeURIComponent(session.id)}`;
     const cancelUrl = `${appBaseUrl}/paypal/cancel?checkoutSessionId=${encodeURIComponent(session.id)}`;
     const { data } = await axios.post('https://api-m.paypal.com/v2/checkout/orders', {
@@ -1009,7 +1024,7 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
       }
     }, {
       headers: {
-        Authorization: `Basic ${authToken}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       }
     });
