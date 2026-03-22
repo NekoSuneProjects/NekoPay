@@ -364,18 +364,37 @@ function pickBestPaymentAttempt(attempts = []) {
   })[0] || null;
 }
 
+function coalescePaymentAttempts(attempts = []) {
+  const best = pickBestPaymentAttempt(attempts);
+  if (!best) return null;
+
+  const sameMethod = attempts.filter((attempt) => attempt.methodId === best.methodId);
+  const confirmationTargets = sameMethod
+    .map((attempt) => Number(attempt.confirmationTarget))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const transactionSource = pickBestPaymentAttempt(
+    sameMethod.filter((attempt) => attempt.transaction && (attempt.transaction.txid || Number(attempt.transaction.conf || 0) > 0))
+  );
+
+  return {
+    ...best,
+    confirmationTarget: confirmationTargets.length ? Math.min(...confirmationTargets) : best.confirmationTarget ?? null,
+    transaction: transactionSource?.transaction || best.transaction || null
+  };
+}
+
 async function getLatestPaymentAttemptForCheckout(checkoutSessionId) {
   const attempts = (await list('paymentAttempts'))
     .filter((attempt) => attempt.checkoutSessionId === checkoutSessionId)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-  return pickBestPaymentAttempt(attempts);
+  return coalescePaymentAttempts(attempts);
 }
 
 async function getLatestPaymentAttemptForOrder(orderId) {
   const attempts = (await list('paymentAttempts'))
     .filter((attempt) => attempt.orderId === orderId)
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-  return pickBestPaymentAttempt(attempts);
+  return coalescePaymentAttempts(attempts);
 }
 
 async function getReusableCheckoutAttempt(checkoutSessionId, methodId) {
