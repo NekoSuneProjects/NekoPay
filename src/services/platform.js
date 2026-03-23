@@ -297,6 +297,18 @@ async function getPaypalAccessTokenFromConfig(secrets = {}) {
   return data.access_token;
 }
 
+function getPaypalRedirectUrl(links = []) {
+  if (!Array.isArray(links)) {
+    return null;
+  }
+
+  return (
+    links.find((link) => link.rel === 'payer-action')?.href
+    || links.find((link) => link.rel === 'approve')?.href
+    || null
+  );
+}
+
 async function buildOnchainPaymentInstructions(store, amount, currency, methodId, referenceId) {
   const config = decryptStoreConfig(store);
   const tokenConfig = getTokenConfig(methodId);
@@ -844,7 +856,7 @@ async function createPaymentAttempt(store, order, methodId, req) {
       provider: 'paypal',
       providerReference: data.id,
       status: data.status,
-      redirectUrl: (data.links || []).find((link) => link.rel === 'approve')?.href || null,
+      redirectUrl: getPaypalRedirectUrl(data.links),
       instructions: null,
       providerPayload: data
     };
@@ -1052,7 +1064,7 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
     payment = {
       providerReference: data.id,
       status: 'pending',
-      redirectUrl: (data.links || []).find((link) => link.rel === 'approve')?.href || null,
+      redirectUrl: getPaypalRedirectUrl(data.links),
       instructions: null,
       providerPayload: data
     };
