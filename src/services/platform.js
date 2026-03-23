@@ -973,6 +973,14 @@ async function createPaymentAttempt(store, order, methodId, req) {
 }
 
 async function createHostedCheckoutPayment(store, session, methodId, req) {
+  if (['Completed', 'Failed', 'Cancelled'].includes(String(session?.status || ''))) {
+    throw new Error(
+      String(session?.status || '') === 'Completed'
+        ? 'This checkout session has already been paid'
+        : `This checkout session is ${String(session?.status || '').toLowerCase()}`
+    );
+  }
+
   if (req.body?.customer) {
     session = await updateBy('checkoutSessions', (item) => item.id === session.id, (item) => ({
       ...item,

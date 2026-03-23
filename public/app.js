@@ -882,6 +882,22 @@ async function hostedCheckoutPage(sessionId, embed = false) {
   const payload = await api(`/api/public/checkout-sessions/${sessionId}`);
   const { session, store } = payload;
   const methods = (session.allowedMethods || []).filter((method) => store.gatewayState?.[method]);
+  const lockedStatus = formatStatus(session.status);
+  const isLocked = ['Completed', 'Failed', 'Cancelled'].includes(lockedStatus);
+  const lockedHeading = lockedStatus === 'Completed'
+    ? 'Already paid'
+    : lockedStatus === 'Failed'
+      ? 'Payment failed'
+      : lockedStatus === 'Cancelled'
+        ? 'Payment cancelled'
+        : `Checkout ${lockedStatus.toLowerCase()}`;
+  const lockedDescription = lockedStatus === 'Completed'
+    ? 'This checkout session has already been paid and cannot be used again.'
+    : lockedStatus === 'Failed'
+      ? 'Payment failed. Please try again or contact support.'
+      : lockedStatus === 'Cancelled'
+        ? 'Payment was cancelled. Please try again or contact support.'
+        : `This checkout session is ${lockedStatus.toLowerCase()} and cannot be used again.`;
   const content = `
       <section class="mx-auto grid max-w-6xl gap-6 px-4 py-6 ${embed ? '' : 'lg:grid-cols-[340px_1fr]'}">
         <aside class="glass rounded-[2rem] border border-white/10 p-6 shadow-glow">
@@ -897,9 +913,18 @@ async function hostedCheckoutPage(sessionId, embed = false) {
         <div class="glass rounded-[2rem] border border-white/10 p-6 shadow-glow">
           <div class="flex items-center justify-between gap-3">
             <h1 class="text-4xl font-bold text-white">${session.itemName}</h1>
-            <button id="cancelHostedCheckoutButton" class="rounded-full border border-white/10 px-4 py-2 text-sm text-soft hover:text-white">Cancel</button>
+            ${isLocked ? '' : '<button id="cancelHostedCheckoutButton" class="rounded-full border border-white/10 px-4 py-2 text-sm text-soft hover:text-white">Cancel</button>'}
           </div>
-          <form id="hostedCheckoutPayForm" class="mt-8 grid gap-6">
+          ${isLocked ? `
+          <div class="mt-8 grid gap-6">
+            <div class="rounded-2xl border border-white/10 bg-black/30 p-5">
+              <div class="text-2xl font-semibold text-white">${lockedHeading}</div>
+              <div class="mt-2 text-soft">${lockedDescription}</div>
+            </div>
+            <div id="hostedPayMessage" class="text-sm text-soft"></div>
+            <button id="hostedCheckoutBackButton" class="rounded-2xl border border-white/10 px-5 py-4 text-lg font-semibold text-white">Go back</button>
+          </div>
+          ` : `<form id="hostedCheckoutPayForm" class="mt-8 grid gap-6">
             <div class="grid gap-4 md:grid-cols-3">
               <input name="email" value="${session.customer?.email || ''}" type="email" class="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white" placeholder="Customer email" />
               <input name="fullName" value="${session.customer?.fullName || ''}" class="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white" placeholder="Full name" />
@@ -908,12 +933,37 @@ async function hostedCheckoutPage(sessionId, embed = false) {
             <div class="grid gap-3 md:grid-cols-4">${methods.map((m, i) => `<label class="rounded-2xl border border-white/10 bg-black/30 p-4 text-center"><input ${i === 0 ? 'checked' : ''} type="radio" name="methodId" value="${m}" class="mb-3 h-4 w-4 accent-[#7ddc5b]" /><div class="font-medium text-white">${escapeHtml(methodLabel(m))}</div></label>`).join('')}</div>
             <button class="rounded-2xl bg-accent px-5 py-4 text-lg font-semibold text-black">Create payment</button>
             <div id="hostedPayMessage" class="text-sm text-soft"></div>
-          </form>
+          </form>`}
         </div>
       </section>
   `;
   if (embed) app.innerHTML = `<main>${content}</main>`;
   else shell(content, state.me?.user);
+
+  if (isLocked) {
+    renderPaymentStatus('hostedPayMessage', {
+      title: `${lockedHeading}.`,
+      status: session.status,
+      paymentAttempt: session.payment || session.paymentAttempt || null,
+      refreshButtonId: null
+    });
+    document.getElementById('hostedCheckoutBackButton').addEventListener('click', () => {
+      if (document.referrer) {
+        window.location.href = document.referrer;
+        return;
+      }
+      if (lockedStatus === 'Completed' && session.successUrl) {
+        window.location.href = session.successUrl;
+        return;
+      }
+      if (lockedStatus === 'Cancelled' && session.cancelUrl) {
+        window.location.href = session.cancelUrl;
+        return;
+      }
+      window.history.back();
+    });
+    return;
+  }
 
   document.getElementById('cancelHostedCheckoutButton').addEventListener('click', async () => {
     await api(`/api/public/checkout-sessions/${sessionId}/cancel`, { method: 'POST' });
