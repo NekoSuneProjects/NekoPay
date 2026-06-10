@@ -16,6 +16,8 @@ const {
 const { append, getBy, list, updateBy } = require('../lib/app-store');
 const { encryptSecret, decryptSecret, randomDigits, randomId, sha256, generateApiKey } = require('../lib/security');
 const { defaultProducts, defaultTaxRate, appBaseUrl, supportedTokens } = require('../config/platform');
+const { HOSTED_GATEWAYS, getGatewayCatalogEntry, gatewayFieldKeys, isCatalogGateway } = require('../config/gateways');
+const { createHostedGatewayPayment, checkHostedGatewayStatus } = require('./hosted-gateways');
 const { convertAmount, quoteTokenAmount } = require('./pricing');
 const { sendMerchantWebhook } = require('./outbound-webhooks');
 const { existsEvmTransaction } = require('./evm');
@@ -70,7 +72,8 @@ function slugify(value) {
 }
 
 function sanitizeStore(store) {
-  const currentGatewayState = deriveGatewayState(decryptStoreConfig(store).secrets, store.wallets || {});
+  const decrypted = decryptStoreConfig(store);
+  const currentGatewayState = deriveGatewayState(decrypted.secrets, store.wallets || {}, decrypted.hosted);
   return {
     id: store.id,
     ownerUserId: store.ownerUserId,
@@ -114,7 +117,8 @@ function sanitizeStore(store) {
       paypalWebhookIdConfigured: Boolean(store.gatewaySecrets?.paypalWebhookId),
       nowpaymentsApiKeyConfigured: Boolean(store.gatewaySecrets?.nowpaymentsApiKey),
       nowpaymentsIpnSecretConfigured: Boolean(store.gatewaySecrets?.nowpaymentsIpnSecret),
-      zbdApiKeyConfigured: Boolean(store.gatewaySecrets?.zbdApiKey)
+      zbdApiKeyConfigured: Boolean(store.gatewaySecrets?.zbdApiKey),
+      hosted: buildHostedConfigPreview(store.gatewaySecrets?.hosted)
     },
     gatewayState: currentGatewayState,
     createdAt: store.createdAt,
@@ -122,8 +126,15 @@ function sanitizeStore(store) {
   };
 }
 
-function deriveGatewayState(secrets = {}, wallets = {}) {
+function deriveGatewayState(secrets = {}, wallets = {}, hosted = {}) {
+  const hostedState = {};
+  for (const gateway of HOSTED_GATEWAYS) {
+    const fields = gateway.fields.map((field) => field.name);
+    hostedState[gateway.key] = fields.length > 0
+      && fields.every((field) => Boolean(hosted?.[gateway.key]?.[field]));
+  }
   return {
+    ...hostedState,
     stripe: Boolean(secrets.stripeSecretKey),
     paypal: Boolean(secrets.paypalClientId && secrets.paypalClientSecret),
     nowpayments: Boolean(secrets.nowpaymentsApiKey),
@@ -169,8 +180,59 @@ function buildSecretPayload(input) {
     paypalWebhookId: encryptSecret(input.paypalWebhookId),
     nowpaymentsApiKey: encryptSecret(input.nowpaymentsApiKey),
     nowpaymentsIpnSecret: encryptSecret(input.nowpaymentsIpnSecret),
-    zbdApiKey: encryptSecret(input.zbdApiKey)
+    zbdApiKey: encryptSecret(input.zbdApiKey),
+    hosted: buildHostedSecretPayload(input.hosted)
   };
+}
+
+// Encrypt the per-gateway hosted credential map: { [gatewayKey]: { [field]: encrypted } }.
+// Only catalog-known gateways/fields are persisted; empty values encrypt to null (safe).
+function buildHostedSecretPayload(hostedInput = {}) {
+  const out = {};
+  for (const gateway of HOSTED_GATEWAYS) {
+    const provided = hostedInput?.[gateway.key];
+    if (!provided) continue;
+    const fields = {};
+    for (const field of gateway.fields) {
+      fields[field.name] = encryptSecret(provided[field.name]);
+    }
+    out[gateway.key] = fields;
+  }
+  return out;
+}
+
+// UI-facing "Saved/Empty" map for hosted credentials: { [gatewayKey]: { [field]: bool } }.
+// Never returns plaintext — only whether each field is populated.
+function buildHostedConfigPreview(hostedStore = {}) {
+  const out = {};
+  for (const gateway of HOSTED_GATEWAYS) {
+    const stored = hostedStore?.[gateway.key];
+    const fields = {};
+    for (const field of gateway.fields) {
+      fields[field.name] = Boolean(stored?.[field.name]);
+    }
+    out[gateway.key] = fields;
+  }
+  return out;
+}
+
+// Merge incoming plaintext hosted credentials over the currently-stored (decrypted) ones,
+// so a blank field in the payload keeps the existing value instead of wiping it. Returns a
+// plaintext map for buildSecretPayload (re-encrypts) and deriveGatewayState (truthiness).
+function mergeHostedSecretsInput(payloadHosted = {}, storedHosted = {}) {
+  const existing = decryptHostedSecrets(storedHosted);
+  const out = {};
+  for (const gateway of HOSTED_GATEWAYS) {
+    const fields = {};
+    for (const field of gateway.fields) {
+      const incoming = payloadHosted?.[gateway.key]?.[field.name];
+      fields[field.name] = (incoming && String(incoming).trim())
+        ? incoming
+        : (existing[gateway.key]?.[field.name] || '');
+    }
+    out[gateway.key] = fields;
+  }
+  return out;
 }
 
 function buildWalletPayload(input) {
@@ -225,8 +287,24 @@ function decryptStoreConfig(store) {
       zbdReceiverType: store.wallets?.zbdReceiverType || '',
       zbdGamertag: store.wallets?.zbdGamertag || '',
       zbdLightningAddress: store.wallets?.zbdLightningAddress || ''
-    }
+    },
+    hosted: decryptHostedSecrets(store.gatewaySecrets?.hosted)
   };
+}
+
+// Decrypt the per-gateway hosted credential map into plaintext for request-time use:
+// { [gatewayKey]: { [field]: plaintext } }. Catalog-known fields only.
+function decryptHostedSecrets(hostedStore = {}) {
+  const out = {};
+  for (const gateway of HOSTED_GATEWAYS) {
+    const stored = hostedStore?.[gateway.key];
+    const fields = {};
+    for (const field of gateway.fields) {
+      fields[field.name] = stored ? (decryptSecret(stored[field.name]) || '') : '';
+    }
+    out[gateway.key] = fields;
+  }
+  return out;
 }
 
 function buildAttemptTiming(tokenConfig = null) {
@@ -412,6 +490,13 @@ function isAttemptReusable(attempt) {
     return Boolean(attempt.instructions?.invoiceRequest || attempt.instructions?.address);
   }
 
+  const catalogEntry = getGatewayCatalogEntry(methodId);
+  if (catalogEntry) {
+    return catalogEntry.flow === 'redirect'
+      ? Boolean(attempt.redirectUrl)
+      : Boolean(attempt.redirectUrl || attempt.instructions || attempt.providerReference);
+  }
+
   return true;
 }
 
@@ -513,7 +598,7 @@ async function createStoreForUser(user, payload = {}) {
     },
     gatewaySecrets,
     wallets,
-    gatewayState: deriveGatewayState(payload.gatewaySecrets || {}, wallets),
+    gatewayState: deriveGatewayState(payload.gatewaySecrets || {}, wallets, payload.gatewaySecrets?.hosted || {}),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -589,7 +674,8 @@ async function updateStore(storeId, userId, payload) {
     paypalWebhookId: payload.gatewaySecrets?.paypalWebhookId || decryptSecret(store.gatewaySecrets?.paypalWebhookId),
     nowpaymentsApiKey: payload.gatewaySecrets?.nowpaymentsApiKey || decryptSecret(store.gatewaySecrets?.nowpaymentsApiKey),
     nowpaymentsIpnSecret: payload.gatewaySecrets?.nowpaymentsIpnSecret || decryptSecret(store.gatewaySecrets?.nowpaymentsIpnSecret),
-    zbdApiKey: payload.gatewaySecrets?.zbdApiKey || decryptSecret(store.gatewaySecrets?.zbdApiKey)
+    zbdApiKey: payload.gatewaySecrets?.zbdApiKey || decryptSecret(store.gatewaySecrets?.zbdApiKey),
+    hosted: mergeHostedSecretsInput(payload.gatewaySecrets?.hosted, store.gatewaySecrets?.hosted)
   };
   const nextWallets = {
     hiveAddress: payload.wallets?.hiveAddress ?? store.wallets?.hiveAddress ?? '',
@@ -621,7 +707,7 @@ async function updateStore(storeId, userId, payload) {
     status: payload.status ?? item.status,
     gatewaySecrets: buildSecretPayload(nextSecretsInput),
     wallets: nextWallets,
-    gatewayState: deriveGatewayState(nextSecretsInput, nextWallets),
+    gatewayState: deriveGatewayState(nextSecretsInput, nextWallets, nextSecretsInput.hosted),
     updatedAt: new Date().toISOString()
   }));
 
@@ -654,7 +740,8 @@ async function createIssue(storeId, user, payload) {
 }
 
 async function createHostedCheckoutSession(store, payload = {}) {
-  const gatewayState = deriveGatewayState(decryptStoreConfig(store).secrets, store.wallets || {});
+  const storeConfig = decryptStoreConfig(store);
+  const gatewayState = deriveGatewayState(storeConfig.secrets, store.wallets || {}, storeConfig.hosted);
   const enabledMethods = Object.entries(gatewayState || {})
     .filter(([, enabled]) => enabled)
     .map(([key]) => key);
@@ -777,7 +864,7 @@ async function createPaymentAttempt(store, order, methodId, req) {
   if (existingAttempt) {
     return existingAttempt;
   }
-  const attemptTiming = normalized === 'zbd'
+  const attemptTiming = (normalized === 'zbd' || isCatalogGateway(normalized))
     ? {
         confirmationTarget: null,
         expiresAt: new Date(Date.now() + (CRYPTO_PAYMENT_TIMEOUT_MINUTES * 60 * 1000)).toISOString()
@@ -944,11 +1031,26 @@ async function createPaymentAttempt(store, order, methodId, req) {
       normalized,
       order.id
     );
+  } else if (isCatalogGateway(normalized)) {
+    payment = await createHostedGatewayPayment({
+      normalized,
+      config,
+      storeId: store.id,
+      amount: order.totals.total,
+      currency: store.defaultCurrency,
+      reference: order.id,
+      description: `Order ${order.id}`,
+      customer: order.customer,
+      successUrl: `${appBaseUrl}/s/${store.slug}?orderId=${order.id}&result=success`,
+      cancelUrl: `${appBaseUrl}/s/${store.slug}?orderId=${order.id}&result=cancelled`,
+      callbackUrl: `${appBaseUrl}/webhooks/${normalized}/${store.hookId}`
+    });
   } else {
     throw new Error('Unsupported payment method');
   }
 
-  if (['stripe', 'paypal', 'nowpayments'].includes(normalized) && !payment?.redirectUrl) {
+  const requiresRedirect = ['stripe', 'paypal', 'nowpayments'].includes(normalized) || payment?.requiresRedirect;
+  if (requiresRedirect && !payment?.redirectUrl) {
     throw new Error(`${normalized.toUpperCase()} did not return a checkout redirect URL`);
   }
 
@@ -997,7 +1099,7 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
   if (existingAttempt) {
     return existingAttempt;
   }
-  const attemptTiming = normalized === 'zbd'
+  const attemptTiming = (normalized === 'zbd' || isCatalogGateway(normalized))
     ? {
         confirmationTarget: null,
         expiresAt: new Date(Date.now() + (CRYPTO_PAYMENT_TIMEOUT_MINUTES * 60 * 1000)).toISOString()
@@ -1154,11 +1256,26 @@ async function createHostedCheckoutPayment(store, session, methodId, req) {
       normalized,
       session.id
     );
+  } else if (isCatalogGateway(normalized)) {
+    payment = await createHostedGatewayPayment({
+      normalized,
+      config,
+      storeId: store.id,
+      amount: session.amount,
+      currency: session.currency,
+      reference: session.id,
+      description: session.itemName,
+      customer: session.customer,
+      successUrl: session.successUrl || `${appBaseUrl}/pay/${session.id}?result=success`,
+      cancelUrl: session.cancelUrl || `${appBaseUrl}/pay/${session.id}?result=cancelled`,
+      callbackUrl: `${appBaseUrl}/webhooks/${normalized}/${store.hookId}`
+    });
   } else {
     throw new Error('Unsupported payment method');
   }
 
-  if (['stripe', 'paypal', 'nowpayments'].includes(normalized) && !payment?.redirectUrl) {
+  const requiresRedirect = ['stripe', 'paypal', 'nowpayments'].includes(normalized) || payment?.requiresRedirect;
+  if (requiresRedirect && !payment?.redirectUrl) {
     throw new Error(`${normalized.toUpperCase()} did not return a checkout redirect URL`);
   }
 
@@ -1275,6 +1392,50 @@ async function refreshHostedCheckoutStatus(store, session) {
     return attachPaymentAttempt(session, attempt);
   }
 
+  if (isCatalogGateway(attempt.methodId)) {
+    const config = decryptStoreConfig(store);
+    let result;
+    try {
+      result = await checkHostedGatewayStatus(store, attempt, config);
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        attempt = await markAttemptRateLimited(attempt, error);
+        return attachPaymentAttempt(session, attempt);
+      }
+      throw error;
+    }
+    if (result.completed) {
+      const updated = await markHostedCheckoutSessionStatus(session.id, 'Completed', {
+        ...(session.payment || {}),
+        methodId: attempt.methodId,
+        providerReference: attempt.providerReference,
+        transaction: {
+          txid: String(attempt.providerReference),
+          conf: null,
+          address: attempt.instructions?.address || null,
+          amount: attempt.instructions?.amount || session.amount,
+          currency: attempt.instructions?.currency || session.currency,
+          memo: null
+        }
+      });
+      attempt = await updatePaymentAttempt(attempt.id, () => ({ status: 'completed' }));
+      await sendMerchantWebhook(updated, 'Completed', 'checkout.completed', { payment: updated.payment });
+      return attachPaymentAttempt(updated, attempt);
+    }
+    if (result.failed || isAttemptExpired(attempt)) {
+      attempt = await updatePaymentAttempt(attempt.id, () => ({ status: 'failed' }));
+      const failed = await markHostedCheckoutSessionStatus(session.id, 'Failed', {
+        ...(session.payment || {}),
+        methodId: attempt.methodId,
+        providerReference: attempt.providerReference,
+        instructions: attempt.instructions
+      });
+      await sendMerchantWebhook(failed, 'Failed', 'checkout.failed', { payment: failed.payment });
+      return attachPaymentAttempt(failed, attempt);
+    }
+    return attachPaymentAttempt(session, attempt);
+  }
+
   if (attempt.methodId === 'zbd') {
     if (isAttemptExpired(attempt)) {
       attempt = await updatePaymentAttempt(attempt.id, () => ({ status: 'failed' }));
@@ -1352,6 +1513,41 @@ async function checkManualPaymentStatus(store, order, attempt) {
       }));
     }
     return null;
+  }
+
+  if (isCatalogGateway(attempt.methodId)) {
+    if (isAttemptCoolingDown(attempt)) return attempt;
+    const config = decryptStoreConfig(store);
+    let result;
+    try {
+      result = await checkHostedGatewayStatus(store, attempt, config);
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        return markAttemptRateLimited(attempt, error);
+      }
+      throw error;
+    }
+    if (result.completed) {
+      const updatedAttempt = await updatePaymentAttempt(attempt.id, () => ({ status: 'completed' }));
+      await updateBy('orders', (item) => item.id === order.id, (item) => ({
+        ...item,
+        status: 'paid',
+        updatedAt: new Date().toISOString(),
+        paidAt: new Date().toISOString(),
+        payment: { methodId: attempt.methodId, providerReference: attempt.providerReference }
+      }));
+      return updatedAttempt;
+    }
+    if (result.failed || isAttemptExpired(attempt)) {
+      const updatedAttempt = await updatePaymentAttempt(attempt.id, () => ({ status: 'failed' }));
+      await updateBy('orders', (item) => item.id === order.id, (item) => ({
+        ...item,
+        status: 'failed',
+        updatedAt: new Date().toISOString()
+      }));
+      return updatedAttempt;
+    }
+    return attempt;
   }
 
   if (!getTokenConfig(attempt.methodId)) return null;

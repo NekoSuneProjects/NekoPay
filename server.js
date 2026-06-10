@@ -9,6 +9,7 @@ const { list, getBy, updateBy, readState, closeStorage } = require('./src/lib/ap
 const { SESSION_COOKIE, createUser, createVerificationToken, verifyEmailToken, loginUser, getUserFromToken, logoutToken, seedAdminIfNeeded } = require('./src/services/auth');
 const { requireAuth, requireAdmin } = require('./src/middleware/auth');
 const { platformName, supportedCurrencies, supportedTokens, defaultProducts } = require('./src/config/platform');
+const { publicCatalog } = require('./src/config/gateways');
 const { convertAmount } = require('./src/services/pricing');
 const { sanitizeStore, createStoreForUser, getStoreByOwner, getStoresByOwner, getStoreBySlug, getStoreByHookId, getStoreBySecretApiKey, rotateStoreApiKey, updateStore, listStoresForUser, createIssue, createHostedCheckoutSession, listHostedCheckoutSessions, getHostedCheckoutSession, markHostedCheckoutSessionStatus, createHostedCheckoutPayment, refreshHostedCheckoutStatus, createPublicOrder, createPaymentAttempt, getLatestPaymentAttemptForCheckout, getLatestPaymentAttemptForOrder, checkManualPaymentStatus, checkNowPaymentsStatus, verifyNowPaymentsSignature, decryptStoreConfig } = require('./src/services/platform');
 const { startBackgroundWorker, stopBackgroundWorker } = require('./src/services/background-worker');
@@ -565,6 +566,7 @@ app.get('/api/bootstrap', async (req, res) => {
     platformName,
     supportedCurrencies,
     supportedTokens,
+    hostedGateways: publicCatalog(),
     authUser: normalizeUser(req.user),
     defaultProducts,
     myStore: myStores[0] || null,

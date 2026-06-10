@@ -1,5 +1,6 @@
 const { append, getBy, list } = require('../lib/app-store');
 const { supportedTokens } = require('../config/platform');
+const { isCatalogGateway } = require('../config/gateways');
 const {
   getHostedCheckoutSession,
   refreshHostedCheckoutStatus,
@@ -25,6 +26,7 @@ function isHandledByWorker(attempt) {
   if (attempt.methodId === 'paypal') return true;
   if (attempt.methodId === 'nowpayments') return true;
   if (attempt.methodId === 'zbd') return true;
+  if (isCatalogGateway(attempt.methodId)) return true;
   if (supportedTokens[attempt.methodId] && supportedTokens[attempt.methodId].enabled !== false) return true;
   return false;
 }
@@ -88,6 +90,22 @@ async function processAttempt(attempt) {
     if (attempt.methodId === 'nowpayments') {
       const beforeStatus = order.status;
       await checkNowPaymentsStatus(store, order, attempt);
+      const refreshed = await getBy('orders', (item) => item.id === order.id);
+      if (refreshed?.status && refreshed.status !== beforeStatus) {
+        await logWorkerEvent('background.order.status_changed', {
+          orderId: order.id,
+          from: beforeStatus,
+          to: refreshed.status,
+          methodId: attempt.methodId,
+          paymentAttemptId: attempt.id
+        });
+      }
+      return;
+    }
+
+    if (isCatalogGateway(attempt.methodId)) {
+      const beforeStatus = order.status;
+      await checkManualPaymentStatus(store, order, attempt);
       const refreshed = await getBy('orders', (item) => item.id === order.id);
       if (refreshed?.status && refreshed.status !== beforeStatus) {
         await logWorkerEvent('background.order.status_changed', {

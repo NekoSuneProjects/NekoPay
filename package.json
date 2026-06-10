@@ -6,15 +6,13 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "echo \"No tests configured\""
+    "test": "echo \"No tests configured\"",
+    "postinstall": "npm install git+https://github.com/NekoSuneVR/nekosunevr-payments.git#betatesting --force"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "scripts": {
-    "postinstall": "npm install git+https://github.com/NekoSuneVR/nekosunevr-payments.git#betatesting --force"
-  },
   "dependencies": {
     "@blurtfoundation/blurtjs": "^1.0.0",
     "@hiveio/hive-js": "^2.0.8",

@@ -49,7 +49,89 @@ function methodLabel(methodId) {
   const token = state.bootstrap?.supportedTokens?.[methodId];
   if (token?.label) return token.label;
   if (String(methodId || '').toLowerCase() === 'zbd') return 'ZBD Lightning';
+  const hosted = (state.bootstrap?.hostedGateways || []).find((gateway) => gateway.key === methodId);
+  if (hosted?.label) return hosted.label;
   return String(methodId || '').toUpperCase();
+}
+
+const HOSTED_CATEGORY_LABELS = {
+  'gateway-fiat': 'Cards & local methods (PSP)',
+  'gateway-crypto': 'Crypto processors',
+  'gateway-lightning': 'Bitcoin Lightning',
+  'gateway-gaming': 'Gaming & commerce',
+  'gateway-bank': 'Bank transfer',
+  'gateway-skins': 'Game skins'
+};
+
+// Render the data-driven hosted-gateway config cards, grouped by category, from the
+// bootstrap catalog. Inputs are named `hosted.<key>.<field>`; the Saved/Empty badge reads
+// store.configPreview.hosted[key][field]; beta gateways get a BETA badge + warning note.
+function renderHostedGatewayCards(store) {
+  const catalog = state.bootstrap?.hostedGateways || [];
+  if (!catalog.length) return '';
+  const byCategory = catalog.reduce((groups, gateway) => {
+    (groups[gateway.category] = groups[gateway.category] || []).push(gateway);
+    return groups;
+  }, {});
+  const sections = Object.keys(byCategory).map((category) => {
+    const cards = byCategory[category].map((gateway) => {
+      const betaBadge = gateway.tier === 'beta'
+        ? '<span class="shrink-0 rounded-full bg-amber-500/20 px-2 py-0.5 text-[0.6rem] uppercase tracking-[0.2em] text-amber-300">Beta</span>'
+        : '';
+      const fields = gateway.fields.map((field) => {
+        const saved = store.configPreview?.hosted?.[gateway.key]?.[field.name];
+        return `
+          <label class="grid min-w-0 gap-2">
+            <div class="flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <span class="min-w-0 text-xs text-soft">${escapeHtml(field.label)}</span>
+              <span class="shrink-0 text-[0.6rem] uppercase tracking-[0.3em] ${saved ? 'text-accent' : 'text-soft'}">${saved ? 'Saved' : 'Empty'}</span>
+            </div>
+            <input name="hosted.${gateway.key}.${field.name}" type="password" autocomplete="off" class="min-w-0 rounded-2xl border border-white/10 bg-black/30 px-4 py-2.5 text-white" placeholder="${escapeHtml(field.label)}" />
+          </label>`;
+      }).join('');
+      const note = gateway.tier === 'beta'
+        ? '<p class="mt-1 text-[0.65rem] text-amber-300/80">Beta — endpoints unverified; test before going live.</p>'
+        : '';
+      return `
+        <div class="grid min-w-0 gap-3 rounded-3xl border border-white/10 bg-black/20 p-4">
+          <div class="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <span class="min-w-0 text-sm font-semibold text-white">${escapeHtml(gateway.label)}</span>
+            ${betaBadge}
+          </div>
+          ${fields}
+          ${note}
+        </div>`;
+    }).join('');
+    return `
+      <div class="grid gap-3">
+        <h3 class="text-xs uppercase tracking-[0.3em] text-soft">${escapeHtml(HOSTED_CATEGORY_LABELS[category] || category)}</h3>
+        <div class="grid gap-3 md:grid-cols-2">${cards}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="grid gap-5 border-t border-white/10 pt-5">
+      <div class="min-w-0">
+        <h3 class="text-lg font-semibold text-white">More payment gateways</h3>
+        <p class="text-xs text-soft">Add API keys to enable extra hosted gateways. Keys are encrypted at rest and never returned.</p>
+      </div>
+      ${sections}
+    </div>`;
+}
+
+// Collect non-empty hosted-gateway inputs (`hosted.<key>.<field>`) into a nested map.
+// Blank fields are omitted so saving doesn't wipe an already-stored key (server merges).
+function collectHostedGatewaySecrets(form) {
+  const catalog = state.bootstrap?.hostedGateways || [];
+  const hosted = {};
+  for (const gateway of catalog) {
+    for (const field of gateway.fields) {
+      const value = form.get(`hosted.${gateway.key}.${field.name}`);
+      if (value && String(value).trim()) {
+        (hosted[gateway.key] = hosted[gateway.key] || {})[field.name] = value;
+      }
+    }
+  }
+  return hosted;
 }
 
 function pathname() {
@@ -421,6 +503,7 @@ async function merchantPage() {
                 </label>
               `).join('')}
             </div>
+            ${renderHostedGatewayCards(store)}
             <button class="rounded-2xl bg-accent px-5 py-3 font-semibold text-black">Save encrypted config</button>
             <div id="gatewayMessage" class="text-sm text-soft"></div>
           </form>
@@ -622,7 +705,8 @@ async function merchantPage() {
             paypalWebhookId: form.get('paypalWebhookId'),
             nowpaymentsApiKey: form.get('nowpaymentsApiKey'),
             nowpaymentsIpnSecret: form.get('nowpaymentsIpnSecret'),
-            zbdApiKey: form.get('zbdApiKey')
+            zbdApiKey: form.get('zbdApiKey'),
+            hosted: collectHostedGatewaySecrets(form)
           },
           wallets: {
             hiveAddress: form.get('hiveAddress'),
