@@ -21,7 +21,7 @@ const { createHostedGatewayPayment, checkHostedGatewayStatus } = require('./host
 const { convertAmount, quoteTokenAmount } = require('./pricing');
 const { sendMerchantWebhook } = require('./outbound-webhooks');
 const { existsEvmTransaction } = require('./evm');
-const { existsSolanaTransaction } = require('./solana');
+const { existsSolanaTransaction, createSolanaPayRequest } = require('./solana');
 const { quoteSatsFromFiat, createZbdCharge } = require('./zbd');
 
 const CRYPTO_PAYMENT_MIN_CONFIRMATIONS = Number(process.env.CRYPTO_PAYMENT_MIN_CONFIRMATIONS || 200);
@@ -411,19 +411,36 @@ async function buildOnchainPaymentInstructions(store, amount, currency, methodId
   const quote = await quoteTokenAmount(String(methodId || '').toLowerCase(), amount, currency);
   const memo = tokenConfig?.memo ? `${String(methodId || '').toLowerCase()}-${store.hookId}-${referenceId}` : null;
 
+  const instructions = {
+    address: walletAddress,
+    amount: quote.amount,
+    currency: tokenConfig?.invoiceSymbol || quote.symbol,
+    memo,
+    contract: tokenConfig?.contract || null,
+    note: tokenConfig?.note || null,
+    network: tokenConfig?.network || null
+  };
+
+  // Solana methods use the Solana Pay protocol: attach a `solana:` URL + QR + unique reference
+  // so any wallet can pay and we can verify the exact transaction later via the reference.
+  if (isSolanaMethod(methodId)) {
+    const pay = await createSolanaPayRequest({
+      recipient: walletAddress,
+      amount: quote.amount,
+      tokenConfig,
+      label: store.name,
+      message: `${store.name} - ${referenceId}`
+    });
+    instructions.reference = pay.reference;
+    instructions.url = pay.url;
+    instructions.qr = pay.qr;
+  }
+
   return {
     providerReference: referenceId,
     status: 'pending',
     redirectUrl: null,
-    instructions: {
-      address: walletAddress,
-      amount: quote.amount,
-      currency: tokenConfig?.invoiceSymbol || quote.symbol,
-      memo,
-      contract: tokenConfig?.contract || null,
-      note: tokenConfig?.note || null,
-      network: tokenConfig?.network || null
-    },
+    instructions,
     providerPayload: quote
   };
 }
@@ -452,7 +469,8 @@ async function checkSupportedOnchainTransaction(attempt, createdAt) {
       attempt.instructions.amount,
       createdAt,
       tokenConfig,
-      minimumConfirmations
+      minimumConfirmations,
+      attempt.instructions.reference || null
     );
   }
 

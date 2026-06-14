@@ -254,6 +254,8 @@ function renderPaymentStatus(containerId, {
   const currency = transaction?.currency || instructions.currency || '';
   const address = transaction?.address || instructions.address || '-';
   const invoiceRequest = instructions.invoiceRequest || null;
+  const payUrl = instructions.url || null;
+  const payQr = instructions.qr || null;
   const note = instructions.note || null;
   const network = instructions.network || null;
   const contract = transaction?.contract || instructions.contract || null;
@@ -275,6 +277,8 @@ function renderPaymentStatus(containerId, {
       ${network ? `<div>Network: ${network}</div>` : ''}
       ${contract ? `<div>Contract: <span class="break-all">${contract}</span></div>` : ''}
       ${invoiceRequest ? `<div>Invoice: <span class="break-all">${invoiceRequest}</span></div>` : ''}
+      ${payQr ? `<div class="pt-2"><img src="${payQr}" alt="Solana Pay QR" width="200" height="200" class="rounded-xl bg-white p-2" /></div>` : ''}
+      ${payUrl ? `<div><a href="${payUrl}" class="break-all text-accent underline">Open in Solana wallet</a></div>` : ''}
       ${note ? `<div>Note: ${note}</div>` : ''}
       <div class="pt-2 text-white">Current status: ${statusLabel}</div>
       ${confirmationTarget != null ? `<div>Confirmations: ${currentConfirmations} / ${confirmationTarget}</div>` : ''}
