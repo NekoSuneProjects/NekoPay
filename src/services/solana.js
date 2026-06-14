@@ -1,94 +1,71 @@
-// Solana payments via the official Solana Pay protocol (@solana/pay).
+// Solana payments via the nekosunevr-payments package's Solana Pay module.
 //
-// Each invoice gets a unique `reference` public key (a throwaway keypair pubkey used only as an
-// on-chain marker). We encode a `solana:` payment URL carrying recipient + amount + reference
-// (+ SPL mint for token payments) and render it as a QR for any Solana wallet to pay.
+// Rather than calling @solana/pay directly, this delegates to the package's SOLANAPAYModule
+// "callout" — the same modular interface NekoPay already uses for HIVE/STEEM/etc. (see
+// chainModules in ./platform.js). That keeps a single source of truth for the Solana Pay
+// create/verify flow in the package, and this file is just the thin adapter that maps our
+// per-store token config + the {exists,txid,conf} shape the platform dispatch expects.
 //
-// Verification is unambiguous: findReference() locates the exact signature that paid THIS
-// invoice (no amount-collision guessing), then validateTransfer() confirms the recipient,
-// amount, and SPL token all match what we requested. This replaces the earlier balance-scan
-// heuristic, which could mis-attribute two equal-amount payments to the same wallet.
+// Flow (official Solana Pay merchant pattern):
+//   createSolanaPayRequest() -> { reference, url, qr } : a `solana:` URL + QR; persist `reference`.
+//   existsSolanaTransaction(..., reference) -> findReference + validateTransfer by that reference,
+//   so two same-amount payments to one wallet never collide.
 
-const { Connection, PublicKey, Keypair } = require('@solana/web3.js');
-const { encodeURL, findReference, validateTransfer, FindReferenceError } = require('@solana/pay');
-const BigNumber = require('bignumber.js');
+const { SOLANAPAYModule } = require('nekosunevr-payments');
 const QRCode = require('qrcode');
 
-const DEFAULT_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
-// 'confirmed' matches the official Solana Pay merchant example: fast detection, negligible
-// reorg risk for this flow. Override to 'finalized' for maximum settlement safety.
-const COMMITMENT = process.env.SOLANA_COMMITMENT || 'confirmed';
+const DEFAULT_RPC_URL = process.env.SOLANA_RPC_URL
+  || process.env.NEKOPAY_SOLANAPAY_EXPLORER_URL
+  || 'https://api.mainnet-beta.solana.com';
 
-function getConnection(tokenConfig = {}) {
-  return new Connection(tokenConfig.url || DEFAULT_RPC_URL, COMMITMENT);
+// Build a SOLANAPAYModule for this token. For SPL tokens we pass `isSolana: true` so the
+// package preserves the base58 mint case — its constructor otherwise lowercases tokenContract
+// for non-`isSolana` modules, which corrupts a Solana mint into an invalid public key.
+function getModule(tokenConfig = {}) {
+  const overrides = { url: tokenConfig.url || DEFAULT_RPC_URL };
+  if (tokenConfig.contract) {
+    overrides.tokenContract = tokenConfig.contract;
+    overrides.isSolana = true;
+  }
+  return new SOLANAPAYModule(overrides);
 }
 
 // Build the customer-facing Solana Pay request: a `solana:` URL, a scannable QR (PNG data URI),
-// and the reference we must persist on the payment attempt to verify it later.
+// and the reference we persist on the payment attempt to verify it later.
 async function createSolanaPayRequest({ recipient, amount, tokenConfig = {}, label, message, memo }) {
-  const reference = Keypair.generate().publicKey;
-  const fields = {
-    recipient: new PublicKey(recipient),
-    amount: new BigNumber(amount),
-    reference,
+  const mod = getModule(tokenConfig);
+  const { url, reference } = await mod.createPayment({
+    recipient,
+    amount,
+    splToken: tokenConfig.contract || undefined,
     label: label || undefined,
     message: message || undefined,
     memo: memo || undefined
-  };
-  if (tokenConfig.contract) {
-    fields.splToken = new PublicKey(tokenConfig.contract);
-  }
+  });
 
-  const url = encodeURL(fields).toString();
   const qr = await QRCode.toDataURL(url, { margin: 1, width: 360 });
-
-  return { reference: reference.toBase58(), url, qr };
+  return { reference, url, qr };
 }
 
-// Verify a Solana Pay payment by its reference, then validate the on-chain transfer.
-// Returns { exists, txid, conf } to match the shape the platform dispatch expects.
+// Verify a Solana Pay payment by its reference. Returns { exists, txid, conf } to match the
+// shape the platform dispatch (checkSupportedOnchainTransaction) expects.
 async function existsSolanaTransaction(address, amount, createdAt, tokenConfig = {}, minimumConfirmations = 0, reference = null) {
   if (!reference) {
-    // Without a stored reference there is nothing to look up (every Solana Pay invoice has one).
+    // Every Solana Pay invoice stores a reference; without it there is nothing to look up.
     return { exists: false, txid: null, conf: 0 };
   }
 
-  const connection = getConnection(tokenConfig);
-  const referenceKey = new PublicKey(reference);
+  const mod = getModule(tokenConfig);
+  const timestamp = createdAt ? new Date(createdAt).getTime() : 0;
 
-  let signatureInfo;
-  try {
-    signatureInfo = await findReference(connection, referenceKey, { finality: COMMITMENT });
-  } catch (error) {
-    if (error instanceof FindReferenceError) {
-      // No transaction carrying this reference has landed yet — customer hasn't paid.
-      return { exists: false, txid: null, conf: 0 };
-    }
-    throw error;
-  }
-
-  try {
-    await validateTransfer(
-      connection,
-      signatureInfo.signature,
-      {
-        recipient: new PublicKey(address),
-        amount: new BigNumber(amount),
-        splToken: tokenConfig.contract ? new PublicKey(tokenConfig.contract) : undefined,
-        reference: referenceKey
-      },
-      { commitment: COMMITMENT }
-    );
-  } catch (error) {
-    // A referenced transaction exists but does not match the requested transfer (wrong amount,
-    // recipient, or token) — not a valid payment for this invoice.
-    return { exists: false, txid: signatureInfo.signature, conf: 0 };
-  }
+  // SOLANAPAYModule.existsTransaction(address, amount, timestamp, reference, minConfirmations).
+  // The reference is passed in the `memo` slot — the module routes it to findReference.
+  const result = await mod.existsTransaction(address, amount, timestamp, reference, Number(minimumConfirmations || 0));
 
   return {
-    exists: true,
-    txid: signatureInfo.signature,
-    conf: Math.max(Number(minimumConfirmations || 0), 1)
+    exists: Boolean(result && result.exists),
+    txid: (result && result.txid) || null,
+    conf: Number((result && result.conf) || 0)
   };
 }
 

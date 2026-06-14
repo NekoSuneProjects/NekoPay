@@ -44,8 +44,8 @@ const supportedTokens = {
     priceId: 'matic-network',
     invoiceSymbol: 'POL',
     note: 'Native Polygon',
-    url: 'https://pol1.trezor.io/api',
-    altExplorerUrls: ['https://pol2.trezor.io/api']
+    url: 'https://maticbook.guarda.com/api',
+    altExplorerUrls: ['https://pol1.trezor.io/api', 'https://pol2.trezor.io/api']
   },
   bnb: {
     enabled: false,
@@ -75,8 +75,8 @@ const supportedTokens = {
     invoiceSymbol: 'MYST',
     contract: '0x1379E8886A944d2D9d440b3d88DF536Aea08d9F3',
     note: 'ERC20 on Polygon',
-    url: 'https://pol1.trezor.io/api',
-    altExplorerUrls: ['https://pol2.trezor.io/api']
+    url: 'https://maticbook.guarda.com/api',
+    altExplorerUrls: ['https://pol1.trezor.io/api', 'https://pol2.trezor.io/api']
   },
   usdt_pol: {
     enabled: false,
@@ -91,8 +91,8 @@ const supportedTokens = {
     invoiceSymbol: 'USDT',
     contract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
     note: 'USDT on Polygon',
-    url: 'https://pol1.trezor.io/api',
-    altExplorerUrls: ['https://pol2.trezor.io/api']
+    url: 'https://maticbook.guarda.com/api',
+    altExplorerUrls: ['https://pol1.trezor.io/api', 'https://pol2.trezor.io/api']
   },
   usdc_pol: {
     enabled: false,
@@ -107,8 +107,8 @@ const supportedTokens = {
     invoiceSymbol: 'USDC',
     contract: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
     note: 'USDC on Polygon',
-    url: 'https://pol1.trezor.io/api',
-    altExplorerUrls: ['https://pol2.trezor.io/api']
+    url: 'https://maticbook.guarda.com/api',
+    altExplorerUrls: ['https://pol1.trezor.io/api', 'https://pol2.trezor.io/api']
   },
   usdt_eth: {
     enabled: false,
