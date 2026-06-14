@@ -671,9 +671,24 @@ app.get('/api/dashboard/summary', requireAuth, async (req, res) => {
   const checkoutSessions = (await list('checkoutSessions')).filter((session) => session.storeId === store.id);
   const paymentAttempts = (await list('paymentAttempts')).filter((attempt) => attempt.storeId === store.id);
   const issues = (await list('issues')).filter((issue) => issue.storeId === store.id);
-  const paidRevenue = orders
-    .filter((order) => order.status === 'paid')
-    .reduce((sum, order) => sum + Number(order.totals.total || 0), 0);
+
+  // Revenue is reported in the store's default currency. Paid storefront orders already store
+  // their total in that currency; completed hosted checkout sessions (which never become orders)
+  // hold their amount in the session currency, so convert before summing. Sessions and orders are
+  // disjoint, so there is no double counting.
+  const paidOrders = orders.filter((order) => order.status === 'paid');
+  const completedSessions = checkoutSessions
+    .filter((session) => String(session.status || '').toLowerCase() === 'completed');
+
+  const orderRevenue = paidOrders.reduce((sum, order) => sum + Number(order.totals?.total || 0), 0);
+  const sessionRevenue = (await Promise.all(
+    completedSessions.map((session) => convertAmount(
+      Number(session.amount || 0),
+      session.currency || store.defaultCurrency,
+      store.defaultCurrency
+    ))
+  )).reduce((sum, value) => sum + Number(value || 0), 0);
+  const paidRevenue = orderRevenue + sessionRevenue;
 
   res.json({
     store: sanitizeStore(store),
@@ -681,7 +696,7 @@ app.get('/api/dashboard/summary', requireAuth, async (req, res) => {
     stats: {
       totalCheckouts: checkoutSessions.length,
       totalOrders: orders.length,
-      paidOrders: orders.filter((order) => order.status === 'paid').length,
+      paidOrders: paidOrders.length + completedSessions.length,
       revenue: Number(paidRevenue.toFixed(2)),
       openIssues: issues.filter((issue) => issue.status === 'open').length
     },

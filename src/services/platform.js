@@ -21,6 +21,7 @@ const { createHostedGatewayPayment, checkHostedGatewayStatus } = require('./host
 const { convertAmount, quoteTokenAmount } = require('./pricing');
 const { sendMerchantWebhook } = require('./outbound-webhooks');
 const { existsEvmTransaction } = require('./evm');
+const { existsSolanaTransaction } = require('./solana');
 const { quoteSatsFromFiat, createZbdCharge } = require('./zbd');
 
 const CRYPTO_PAYMENT_MIN_CONFIRMATIONS = Number(process.env.CRYPTO_PAYMENT_MIN_CONFIRMATIONS || 200);
@@ -57,6 +58,10 @@ function getTokenWalletKey(methodId) {
 
 function isEvmMethod(methodId) {
   return getTokenConfig(methodId)?.chainType === 'evm';
+}
+
+function isSolanaMethod(methodId) {
+  return getTokenConfig(methodId)?.chainType === 'solana';
 }
 
 function isZbdMethod(methodId) {
@@ -99,6 +104,7 @@ function sanitizeStore(store) {
       ethAddress: store.wallets?.ethAddress || '',
       polAddress: store.wallets?.polAddress || '',
       bnbAddress: store.wallets?.bnbAddress || '',
+      solAddress: store.wallets?.solAddress || '',
       tlosAddress: store.wallets?.tlosAddress || '',
       eosAddress: store.wallets?.eosAddress || '',
       fioPublicKey: store.wallets?.fioPublicKey || '',
@@ -153,6 +159,9 @@ function deriveGatewayState(secrets = {}, wallets = {}, hosted = {}) {
     usdc_eth: Boolean(getTokenConfig('usdc_eth') && wallets.ethAddress),
     usdt_bnb: Boolean(getTokenConfig('usdt_bnb') && wallets.bnbAddress),
     usdc_bnb: Boolean(getTokenConfig('usdc_bnb') && wallets.bnbAddress),
+    sol: Boolean(getTokenConfig('sol') && wallets.solAddress),
+    usdc_sol: Boolean(getTokenConfig('usdc_sol') && wallets.solAddress),
+    usdt_sol: Boolean(getTokenConfig('usdt_sol') && wallets.solAddress),
     tlos: Boolean(wallets.tlosAddress),
     eos: Boolean(wallets.eosAddress),
     fio: Boolean(wallets.fioPublicKey),
@@ -245,6 +254,7 @@ function buildWalletPayload(input) {
     ethAddress: input.ethAddress || '',
     polAddress: input.polAddress || '',
     bnbAddress: input.bnbAddress || '',
+    solAddress: input.solAddress || '',
     tlosAddress: input.tlosAddress || '',
     eosAddress: input.eosAddress || '',
     fioPublicKey: input.fioPublicKey || '',
@@ -278,6 +288,7 @@ function decryptStoreConfig(store) {
       ethAddress: store.wallets?.ethAddress || '',
       polAddress: store.wallets?.polAddress || '',
       bnbAddress: store.wallets?.bnbAddress || '',
+      solAddress: store.wallets?.solAddress || '',
       tlosAddress: store.wallets?.tlosAddress || '',
       eosAddress: store.wallets?.eosAddress || '',
       fioPublicKey: store.wallets?.fioPublicKey || '',
@@ -427,6 +438,16 @@ async function checkSupportedOnchainTransaction(attempt, createdAt) {
 
   if (isEvmMethod(attempt.methodId)) {
     return existsEvmTransaction(
+      attempt.instructions.address,
+      attempt.instructions.amount,
+      createdAt,
+      tokenConfig,
+      minimumConfirmations
+    );
+  }
+
+  if (isSolanaMethod(attempt.methodId)) {
+    return existsSolanaTransaction(
       attempt.instructions.address,
       attempt.instructions.amount,
       createdAt,
@@ -686,6 +707,7 @@ async function updateStore(storeId, userId, payload) {
     ethAddress: payload.wallets?.ethAddress ?? store.wallets?.ethAddress ?? '',
     polAddress: payload.wallets?.polAddress ?? store.wallets?.polAddress ?? '',
     bnbAddress: payload.wallets?.bnbAddress ?? store.wallets?.bnbAddress ?? '',
+    solAddress: payload.wallets?.solAddress ?? store.wallets?.solAddress ?? '',
     tlosAddress: payload.wallets?.tlosAddress ?? store.wallets?.tlosAddress ?? '',
     eosAddress: payload.wallets?.eosAddress ?? store.wallets?.eosAddress ?? '',
     fioPublicKey: payload.wallets?.fioPublicKey ?? store.wallets?.fioPublicKey ?? '',
