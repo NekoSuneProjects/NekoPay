@@ -6,6 +6,7 @@ const { createHostedCheckoutSession, sanitizeStore } = require('./platform');
 
 const ELIGIBLE_TIERS = new Set(['affiliate', 'verified', 'partner']);
 const PRODUCT_TYPES = new Set(['tip', 'nyatreat', 'subscription']);
+const NYATREATS_PER_USD = 100;
 
 function baseUrl() {
   return String(process.env.PUBLIC_URL || process.env.APP_URL || 'https://pay.nekolive.co.uk').replace(/\/+$/, '');
@@ -152,10 +153,29 @@ async function unlinkCreator(creatorId) {
 function normalizeAmount(value, productType) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('amount must be greater than zero');
-  const minimum = productType === 'subscription' ? 1 : 0.5;
+  const minimum = productType === 'subscription' ? 1 : productType === 'nyatreat' ? 0.01 : 0.5;
   if (amount < minimum) throw new Error(`Minimum ${productType} amount is ${minimum.toFixed(2)}`);
   if (amount > 10000) throw new Error('Creator checkout amount is too large');
   return Number(amount.toFixed(2));
+}
+
+function normalizeNyaTreatCheckout(payload) {
+  const suppliedTreats = payload.nyaTreats;
+  if (suppliedTreats !== undefined && suppliedTreats !== null && suppliedTreats !== '') {
+    const nyaTreats = Number(suppliedTreats);
+    if (!Number.isInteger(nyaTreats) || nyaTreats <= 0) throw new Error('nyaTreats must be a positive whole number');
+    if (nyaTreats > 1000000) throw new Error('NyaTreat checkout is too large');
+    return {
+      nyaTreats,
+      amount: Number((nyaTreats / NYATREATS_PER_USD).toFixed(2))
+    };
+  }
+
+  const amount = normalizeAmount(payload.amount, 'nyatreat');
+  return {
+    amount,
+    nyaTreats: Math.round(amount * NYATREATS_PER_USD)
+  };
 }
 
 async function createCreatorCheckout(payload = {}) {
@@ -167,22 +187,32 @@ async function createCreatorCheckout(payload = {}) {
 
   const productType = String(payload.productType || payload.type || 'tip').toLowerCase();
   if (!PRODUCT_TYPES.has(productType)) throw new Error('productType must be tip, nyatreat, or subscription');
-  const amount = normalizeAmount(payload.amount, productType);
+
+  let amount;
+  let nyaTreats = null;
+  if (productType === 'nyatreat') {
+    const converted = normalizeNyaTreatCheckout(payload);
+    amount = converted.amount;
+    nyaTreats = converted.nyaTreats;
+  } else {
+    amount = normalizeAmount(payload.amount, productType);
+  }
+
   const store = await getBy('stores', (item) => item.id === integration.storeId && item.status === 'active');
   if (!store) throw new Error('Creator NekoPay account is unavailable');
 
   const labels = {
     tip: `Tip for ${integration.channelName || 'creator'}`,
-    nyatreat: `NyaTreat for ${integration.channelName || 'creator'}`,
+    nyatreat: `${nyaTreats} NyaTreats for ${integration.channelName || 'creator'}`,
     subscription: `Subscription to ${integration.channelName || 'creator'}`
   };
   const session = await createHostedCheckoutSession(store, {
     externalId: payload.externalId || `nekolive:${creatorId}:${productType}:${crypto.randomBytes(6).toString('hex')}`,
     itemName: payload.itemName || labels[productType],
-    itemDescription: payload.description || (productType === 'nyatreat' ? 'NekoLive creator NyaTreat support' : 'NekoLive creator support'),
+    itemDescription: payload.description || (productType === 'nyatreat' ? `${nyaTreats} NyaTreats · 100 NyaTreats = $1 USD` : 'NekoLive creator support'),
     amount,
-    currency: String(payload.currency || 'USD').toUpperCase(),
-    displayCurrency: String(payload.displayCurrency || payload.currency || 'USD').toUpperCase(),
+    currency: productType === 'nyatreat' ? 'USD' : String(payload.currency || 'USD').toUpperCase(),
+    displayCurrency: productType === 'nyatreat' ? 'USD' : String(payload.displayCurrency || payload.currency || 'USD').toUpperCase(),
     allowedMethods: payload.allowedMethods,
     notificationUrl: payload.notificationUrl || '',
     notificationSecret: payload.notificationSecret || '',
@@ -203,6 +233,9 @@ async function createCreatorCheckout(payload = {}) {
       supporterId: payload.supporter?.id || null,
       supporterUsername: payload.supporter?.username || null,
       message: String(payload.message || '').slice(0, 500),
+      nyaTreats,
+      nyaTreatsPerUsd: productType === 'nyatreat' ? NYATREATS_PER_USD : null,
+      usdValue: productType === 'nyatreat' ? amount : null,
       recurringIntent: productType === 'subscription'
     }
   });
@@ -212,13 +245,15 @@ async function createCreatorCheckout(payload = {}) {
     sessionId: session.id,
     checkoutUrl: `${baseUrl()}/pay/${session.id}`,
     embedUrl: `${baseUrl()}/embed/pay/${session.id}`,
-    productType
+    productType,
+    ...(productType === 'nyatreat' ? { nyaTreats, usdAmount: amount, nyaTreatsPerUsd: NYATREATS_PER_USD } : {})
   };
 }
 
 module.exports = {
   ELIGIBLE_TIERS,
   PRODUCT_TYPES,
+  NYATREATS_PER_USD,
   startLink,
   decodeState,
   completeLink,
