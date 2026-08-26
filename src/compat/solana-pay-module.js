@@ -1,7 +1,6 @@
 'use strict';
 
 const crypto = require('crypto');
-const { EvmRpcClient } = require('../network/evm-rpc'); // only reuses no code; kept separate intentionally
 
 const DEFAULT_RPC = process.env.SOLANA_RPC_URL || process.env.NEKOPAY_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const TIMEOUT_MS = Number(process.env.NEKOPAY_SOLANA_TIMEOUT_MS || 20000);
