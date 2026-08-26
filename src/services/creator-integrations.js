@@ -201,27 +201,37 @@ async function createCreatorCheckout(payload = {}) {
   const store = await getBy('stores', (item) => item.id === integration.storeId && item.status === 'active');
   if (!store) throw new Error('Creator NekoPay account is unavailable');
 
+  const anonymous = payload.anonymous === true || String(payload.anonymous || '').toLowerCase() === 'true';
+  const supporterUsername = anonymous ? null : (payload.supporter?.username || null);
   const labels = {
     tip: `Tip for ${integration.channelName || 'creator'}`,
     nyatreat: `${nyaTreats} NyaTreats for ${integration.channelName || 'creator'}`,
-    subscription: `Subscription to ${integration.channelName || 'creator'}`
+    subscription: payload.itemName || `${payload.subscriptionPlanName || 'Subscription'} to ${integration.channelName || 'creator'}`
   };
+  const description = payload.description || (productType === 'nyatreat'
+    ? `${nyaTreats} NyaTreats · 100 NyaTreats = $1 USD`
+    : productType === 'subscription'
+      ? `${payload.subscriptionPlanName || 'NekoLive subscription'}${payload.subscriptionDurationMonths ? ` · ${payload.subscriptionDurationMonths} month(s)` : ''}`
+      : 'NekoLive creator support');
+
   const session = await createHostedCheckoutSession(store, {
     externalId: payload.externalId || `nekolive:${creatorId}:${productType}:${crypto.randomBytes(6).toString('hex')}`,
-    itemName: payload.itemName || labels[productType],
-    itemDescription: payload.description || (productType === 'nyatreat' ? `${nyaTreats} NyaTreats · 100 NyaTreats = $1 USD` : 'NekoLive creator support'),
+    itemName: labels[productType],
+    itemDescription: description,
     amount,
-    currency: productType === 'nyatreat' ? 'USD' : String(payload.currency || 'USD').toUpperCase(),
-    displayCurrency: productType === 'nyatreat' ? 'USD' : String(payload.displayCurrency || payload.currency || 'USD').toUpperCase(),
+    currency: productType === 'nyatreat' || productType === 'subscription' ? 'USD' : String(payload.currency || 'USD').toUpperCase(),
+    displayCurrency: productType === 'nyatreat' || productType === 'subscription' ? 'USD' : String(payload.displayCurrency || payload.currency || 'USD').toUpperCase(),
     allowedMethods: payload.allowedMethods,
     notificationUrl: payload.notificationUrl || '',
     notificationSecret: payload.notificationSecret || '',
     successUrl: payload.successUrl || '',
     cancelUrl: payload.cancelUrl || '',
     customer: {
+      // Billing data can still be supplied to the payment processor while the
+      // NekoLive-facing metadata remains anonymous.
       email: String(payload.supporter?.email || payload.customer?.email || ''),
       fullName: String(payload.supporter?.name || payload.customer?.fullName || ''),
-      username: String(payload.supporter?.username || '')
+      username: anonymous ? 'Anonymous' : String(payload.supporter?.username || '')
     },
     metadata: {
       platform: 'nekolive',
@@ -230,12 +240,17 @@ async function createCreatorCheckout(payload = {}) {
       channelName: integration.channelName,
       creatorTier: integration.tier,
       productType,
+      anonymous,
       supporterId: payload.supporter?.id || null,
-      supporterUsername: payload.supporter?.username || null,
+      supporterUsername,
       message: String(payload.message || '').slice(0, 500),
       nyaTreats,
       nyaTreatsPerUsd: productType === 'nyatreat' ? NYATREATS_PER_USD : null,
-      usdValue: productType === 'nyatreat' ? amount : null,
+      usdValue: productType === 'nyatreat' || productType === 'subscription' ? amount : null,
+      subscriptionTier: productType === 'subscription' ? String(payload.subscriptionTier || 'tier1') : null,
+      subscriptionPlanName: productType === 'subscription' ? String(payload.subscriptionPlanName || 'Subscription') : null,
+      subscriptionDurationMonths: productType === 'subscription' ? Number(payload.subscriptionDurationMonths || 1) : null,
+      subscriptionPriceCoins: productType === 'subscription' ? Number(payload.subscriptionPriceCoins || 0) : null,
       recurringIntent: productType === 'subscription'
     }
   });
@@ -246,7 +261,14 @@ async function createCreatorCheckout(payload = {}) {
     checkoutUrl: `${baseUrl()}/pay/${session.id}`,
     embedUrl: `${baseUrl()}/embed/pay/${session.id}`,
     productType,
-    ...(productType === 'nyatreat' ? { nyaTreats, usdAmount: amount, nyaTreatsPerUsd: NYATREATS_PER_USD } : {})
+    anonymous,
+    ...(productType === 'nyatreat' ? { nyaTreats, usdAmount: amount, nyaTreatsPerUsd: NYATREATS_PER_USD } : {}),
+    ...(productType === 'subscription' ? {
+      subscriptionTier: String(payload.subscriptionTier || 'tier1'),
+      subscriptionPlanName: String(payload.subscriptionPlanName || 'Subscription'),
+      subscriptionDurationMonths: Number(payload.subscriptionDurationMonths || 1),
+      usdAmount: amount
+    } : {})
   };
 }
 
