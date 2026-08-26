@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node creator-bootstrap.js",
     "dev": "node --watch creator-bootstrap.js",
-    "test": "node --check index.js && node --check creator-bootstrap.js && node --check src/client.js && node --check src/routes/creator-api.js && node --check src/services/creator-integrations.js && node --check src/services/evm.js && node --check src/compat/chain-modules.js && node --check src/compat/antelope-modules.js && node --check src/compat/network-chain-modules.js && node --check src/compat/solana-pay-module.js && node --check src/network/backend-pool.js && node --check src/network/backends.js && node --check src/network/blockbook.js && node --check src/network/evm-rpc.js && node --check src/network/explorer.js && node --check src/network/index.js"
+    "test": "node --check index.js && node --check creator-bootstrap.js && node --check src/client.js && node --check src/routes/creator-api.js && node --check src/routes/network-api.js && node --check src/services/creator-integrations.js && node --check src/services/evm.js && node --check src/compat/chain-modules.js && node --check src/compat/antelope-modules.js && node --check src/compat/network-chain-modules.js && node --check src/compat/solana-pay-module.js && node --check src/network/backend-pool.js && node --check src/network/backends.js && node --check src/network/blockbook.js && node --check src/network/evm-rpc.js && node --check src/network/explorer.js && node --check src/network/index.js"
   },
   "keywords": [
     "nekopay",
