@@ -4,9 +4,11 @@
 // only by `npm start` -> creator-bootstrap.js. This SDK surface replaces the old
 // nekosunevr-payments module for NekoLive while also exposing the service client.
 const chainModules = require('./src/compat/chain-modules');
+const antelopeModules = require('./src/compat/antelope-modules');
 const { NekoPayClient } = require('./src/client');
 
 module.exports = {
   ...chainModules,
+  ...antelopeModules,
   NekoPayClient
 };
