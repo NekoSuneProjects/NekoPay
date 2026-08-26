@@ -1,5 +1,7 @@
 'use strict';
 
+require('dotenv').config();
+
 // Keep server.js focused on the existing merchant application. This bootstrap mounts
 // creator/platform and network-management routers before server.js registers its normal
 // routes, then starts the existing merchant server. NekoPay stays one process with two modes.
