@@ -1,19 +1,20 @@
 'use strict';
 
 // Keep server.js focused on the existing merchant application. This bootstrap mounts
-// the creator/platform integration router before server.js registers its normal routes,
-// then starts the unchanged merchant server. That gives NekoPay two modes on one process.
+// creator/platform and network-management routers before server.js registers its normal
+// routes, then starts the existing merchant server. NekoPay stays one process with two modes.
 const express = require('express');
 const { createCreatorRouter } = require('./src/routes/creator-api');
+const { createNetworkRouter } = require('./src/routes/network-api');
 
-const creatorRouter = createCreatorRouter();
+const bootstrapRouters = [createCreatorRouter(), createNetworkRouter()];
 const originalUse = express.application.use;
 let mounted = false;
 
 express.application.use = function patchedUse(...args) {
   if (!mounted) {
     mounted = true;
-    originalUse.call(this, creatorRouter);
+    for (const router of bootstrapRouters) originalUse.call(this, router);
   }
   return originalUse.apply(this, args);
 };
