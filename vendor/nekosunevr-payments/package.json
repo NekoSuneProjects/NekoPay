@@ -1,0 +1,6 @@
+{
+  "name": "nekosunevr-payments",
+  "version": "2.0.0-neko-pay",
+  "private": true,
+  "main": "index.js"
+}

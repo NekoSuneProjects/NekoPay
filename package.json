@@ -1,16 +1,21 @@
 {
   "name": "nekopaymentprocessornode",
-  "version": "1.0.0",
-  "description": "Custom payment processor with Stripe, PayPal, NOWPayments, and explorer-backed crypto modules.",
-  "main": "server.js",
+  "version": "2.0.0",
+  "description": "NekoPay dual-mode merchant and content creator payment platform for NekoLive.",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "test": "echo \"No tests configured\"",
-    "postinstall": "npm install git+https://github.com/NekoSuneVR/nekosunevr-payments.git#betatesting --force"
+    "start": "node creator-bootstrap.js",
+    "dev": "node --watch creator-bootstrap.js",
+    "test": "node --check index.js && node --check creator-bootstrap.js && node --check src/client.js && node --check src/routes/creator-api.js && node --check src/routes/network-api.js && node --check src/services/creator-integrations.js && node --check src/services/evm.js && node --check src/compat/chain-modules.js && node --check src/compat/antelope-modules.js && node --check src/compat/network-chain-modules.js && node --check src/compat/solana-pay-module.js && node --check src/network/backend-pool.js && node --check src/network/backends.js && node --check src/network/blockbook.js && node --check src/network/evm-rpc.js && node --check src/network/explorer.js && node --check src/network/index.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "nekopay",
+    "payments",
+    "merchant",
+    "creator-payments",
+    "nekolive"
+  ],
+  "author": "NekoSuneVR",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
@@ -22,7 +27,7 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "mysql2": "^3.20.0",
-    "nekosunevr-payments": "github:NekoSuneVR/nekosunevr-payments#betatesting",
+    "nekosunevr-payments": "file:vendor/nekosunevr-payments",
     "nodemailer": "^8.0.3",
     "qrcode": "^1.5.4",
     "sequelize": "^6.37.8",
