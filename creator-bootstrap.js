@@ -8,6 +8,7 @@ require('dotenv').config();
 const express = require('express');
 const { createCreatorRouter } = require('./src/routes/creator-api');
 const { createNetworkRouter } = require('./src/routes/network-api');
+const { startNekoLiveWebhookRecovery } = require('./src/services/nekolive-webhook-recovery');
 
 const bootstrapRouters = [createCreatorRouter(), createNetworkRouter()];
 const originalUse = express.application.use;
@@ -22,3 +23,4 @@ express.application.use = function patchedUse(...args) {
 };
 
 require('./server');
+startNekoLiveWebhookRecovery();
