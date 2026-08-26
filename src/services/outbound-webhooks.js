@@ -9,6 +9,28 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function notificationSecretFor(session) {
+  const persisted = String(session?.notificationSecret || '').trim();
+  if (persisted) return persisted;
+
+  // Older/current checkout-session rows do not persist notificationSecret.
+  // NekoLive creator checkouts are server-to-server integrations, so recover
+  // their callback authentication from the shared service secret after the
+  // checkout is reloaded from the database. This is especially important for
+  // on-chain crypto, where completion is detected later during status polling.
+  if (String(session?.metadata?.platform || '').toLowerCase() === 'nekolive') {
+    return String(
+      process.env.NEKOLIVE_WEBHOOK_SECRET ||
+      process.env.NEKOPAY_WEBHOOK_SECRET ||
+      process.env.NEKOLIVE_SERVICE_API_KEY ||
+      process.env.NEKOPAY_SERVICE_API_KEY ||
+      ''
+    ).trim();
+  }
+
+  return '';
+}
+
 async function sendMerchantWebhook(session, status, event, extra = {}) {
   if (!session?.notificationUrl) {
     return { skipped: true };
@@ -34,8 +56,12 @@ async function sendMerchantWebhook(session, status, event, extra = {}) {
     createdAt: new Date().toISOString()
   };
 
+  const notificationSecret = notificationSecretFor(session);
   let lastError = null;
+  let attemptsMade = 0;
+
   for (let attempt = 1; attempt <= WEBHOOK_ATTEMPTS; attempt += 1) {
+    attemptsMade = attempt;
     try {
       const response = await axios.post(session.notificationUrl, payload, {
         timeout: 15000,
@@ -44,9 +70,9 @@ async function sendMerchantWebhook(session, status, event, extra = {}) {
           'x-nekopay-event': event,
           'x-nekopay-checkout-session': String(session.id || ''),
           'x-nekopay-delivery-attempt': String(attempt),
-          ...(session.notificationSecret ? {
-            Authorization: `Bearer ${session.notificationSecret}`,
-            'x-nekopay-webhook-secret': session.notificationSecret
+          ...(notificationSecret ? {
+            Authorization: `Bearer ${notificationSecret}`,
+            'x-nekopay-webhook-secret': notificationSecret
           } : {})
         }
       });
@@ -62,10 +88,23 @@ async function sendMerchantWebhook(session, status, event, extra = {}) {
         createdAt: new Date().toISOString()
       });
 
+      console.log(
+        `[merchant-webhook] Delivered ${event} for ${session.id} to ${session.notificationUrl} (${response.status}, attempt ${attempt}).`
+      );
       return { delivered: true, statusCode: response.status, attempts: attempt };
     } catch (error) {
       lastError = error;
       const statusCode = Number(error?.response?.status || 0) || null;
+      const responseText = typeof error?.response?.data === 'string'
+        ? error.response.data.slice(0, 500)
+        : error?.response?.data
+          ? JSON.stringify(error.response.data).slice(0, 500)
+          : '';
+      console.warn(
+        `[merchant-webhook] ${event} delivery attempt ${attempt}/${WEBHOOK_ATTEMPTS} failed for ${session.id}:`,
+        statusCode ? `HTTP ${statusCode}` : error.message,
+        responseText || ''
+      );
       const retryable = !statusCode || statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500;
       if (!retryable || attempt >= WEBHOOK_ATTEMPTS) break;
       await sleep(WEBHOOK_RETRY_BASE_MS * attempt);
@@ -79,17 +118,18 @@ async function sendMerchantWebhook(session, status, event, extra = {}) {
     targetUrl: session.notificationUrl,
     error: lastError?.message || 'Webhook delivery failed',
     statusCode: Number(lastError?.response?.status || 0) || null,
-    attempts: WEBHOOK_ATTEMPTS,
+    attempts: attemptsMade,
     payload,
     createdAt: new Date().toISOString()
   });
   console.error(
-    `[merchant-webhook] Failed ${event} delivery to ${session.notificationUrl} after ${WEBHOOK_ATTEMPTS} attempt(s):`,
+    `[merchant-webhook] Failed ${event} delivery to ${session.notificationUrl} after ${attemptsMade} attempt(s):`,
     lastError?.message || 'unknown error'
   );
-  return { delivered: false, error: lastError?.message || 'Webhook delivery failed', attempts: WEBHOOK_ATTEMPTS };
+  return { delivered: false, error: lastError?.message || 'Webhook delivery failed', attempts: attemptsMade };
 }
 
 module.exports = {
-  sendMerchantWebhook
+  sendMerchantWebhook,
+  notificationSecretFor
 };
