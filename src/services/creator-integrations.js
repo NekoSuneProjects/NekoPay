@@ -78,6 +78,37 @@ async function recordIntegration(payload) {
   return payload;
 }
 
+function creatorGatewayState(safeStore) {
+  const state = {
+    ...(safeStore?.gatewayState && typeof safeStore.gatewayState === 'object' ? safeStore.gatewayState : {})
+  };
+  const preview = safeStore?.configPreview || {};
+
+  if (state.stripe) {
+    state.stripe = Boolean(preview.stripeSecretKeyConfigured && preview.stripeWebhookSecretConfigured);
+  }
+  if (state.paypal) {
+    state.paypal = Boolean(
+      preview.paypalClientIdConfigured &&
+      preview.paypalClientSecretConfigured &&
+      preview.paypalWebhookIdConfigured
+    );
+  }
+  if (state.nowpayments) {
+    state.nowpayments = Boolean(
+      preview.nowpaymentsApiKeyConfigured &&
+      preview.nowpaymentsIpnSecretConfigured
+    );
+  }
+  return state;
+}
+
+function configuredCreatorGateways(safeStore) {
+  return Object.entries(creatorGatewayState(safeStore))
+    .filter(([, configured]) => Boolean(configured))
+    .map(([name]) => name);
+}
+
 function startLink(payload = {}) {
   const creatorId = String(payload.creatorId || payload.channelId || '').trim();
   if (!creatorId) throw new Error('creatorId is required');
@@ -127,8 +158,12 @@ async function getCreatorStatus(creatorId) {
     return { linked: false, creatorId: String(creatorId || ''), reason: 'store_unavailable' };
   }
   const safeStore = sanitizeStore(store);
+  const gatewayState = creatorGatewayState(safeStore);
+  const configuredGateways = configuredCreatorGateways(safeStore);
   return {
     linked: true,
+    ready: configuredGateways.length > 0,
+    configuredGateways,
     creatorId: integration.creatorId,
     channelId: integration.channelId,
     channelName: integration.channelName,
@@ -138,7 +173,8 @@ async function getCreatorStatus(creatorId) {
       id: safeStore.id,
       name: safeStore.name,
       slug: safeStore.slug,
-      gatewayState: safeStore.gatewayState
+      hookId: safeStore.hookId,
+      gatewayState
     }
   };
 }
@@ -165,17 +201,11 @@ function normalizeNyaTreatCheckout(payload) {
     const nyaTreats = Number(suppliedTreats);
     if (!Number.isInteger(nyaTreats) || nyaTreats <= 0) throw new Error('nyaTreats must be a positive whole number');
     if (nyaTreats > 1000000) throw new Error('NyaTreat checkout is too large');
-    return {
-      nyaTreats,
-      amount: Number((nyaTreats / NYATREATS_PER_USD).toFixed(2))
-    };
+    return { nyaTreats, amount: Number((nyaTreats / NYATREATS_PER_USD).toFixed(2)) };
   }
 
   const amount = normalizeAmount(payload.amount, 'nyatreat');
-  return {
-    amount,
-    nyaTreats: Math.round(amount * NYATREATS_PER_USD)
-  };
+  return { amount, nyaTreats: Math.round(amount * NYATREATS_PER_USD) };
 }
 
 async function createCreatorCheckout(payload = {}) {
@@ -200,6 +230,12 @@ async function createCreatorCheckout(payload = {}) {
 
   const store = await getBy('stores', (item) => item.id === integration.storeId && item.status === 'active');
   if (!store) throw new Error('Creator NekoPay account is unavailable');
+
+  const safeStore = sanitizeStore(store);
+  const configuredGateways = configuredCreatorGateways(safeStore);
+  if (!configuredGateways.length) {
+    throw new Error('Creator NekoPay setup is incomplete. Stripe/PayPal/NOWPayments require their provider webhook verification settings before creator payments can go live.');
+  }
 
   const anonymous = payload.anonymous === true || String(payload.anonymous || '').toLowerCase() === 'true';
   const supporterUsername = anonymous ? null : (payload.supporter?.username || null);
@@ -227,8 +263,6 @@ async function createCreatorCheckout(payload = {}) {
     successUrl: payload.successUrl || '',
     cancelUrl: payload.cancelUrl || '',
     customer: {
-      // Billing data can still be supplied to the payment processor while the
-      // NekoLive-facing metadata remains anonymous.
       email: String(payload.supporter?.email || payload.customer?.email || ''),
       fullName: String(payload.supporter?.name || payload.customer?.fullName || ''),
       username: anonymous ? 'Anonymous' : String(payload.supporter?.username || '')
@@ -276,6 +310,8 @@ module.exports = {
   ELIGIBLE_TIERS,
   PRODUCT_TYPES,
   NYATREATS_PER_USD,
+  creatorGatewayState,
+  configuredCreatorGateways,
   startLink,
   decodeState,
   completeLink,
