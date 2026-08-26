@@ -10,7 +10,9 @@ const {
   completeLink,
   getCreatorStatus,
   unlinkCreator,
-  createCreatorCheckout
+  createCreatorCheckout,
+  creatorGatewayState,
+  configuredCreatorGateways
 } = require('../services/creator-integrations');
 const chainModules = require('../compat/chain-modules');
 
@@ -40,18 +42,16 @@ function safeReturnUrl(value) {
 
 function readinessFromStore(store) {
   const safeStore = sanitizeStore(store);
-  const gatewayState = safeStore?.gatewayState && typeof safeStore.gatewayState === 'object'
-    ? safeStore.gatewayState
-    : {};
-  const configuredGateways = Object.entries(gatewayState)
-    .filter(([, enabled]) => Boolean(enabled))
-    .map(([name]) => name);
+  const gatewayState = creatorGatewayState(safeStore);
+  const configuredGateways = configuredCreatorGateways(safeStore);
   return {
     store: {
       id: safeStore.id,
       name: safeStore.name,
       slug: safeStore.slug,
-      gatewayState
+      hookId: safeStore.hookId,
+      gatewayState,
+      configPreview: safeStore.configPreview || {}
     },
     ready: configuredGateways.length > 0,
     configuredGateways
@@ -92,16 +92,17 @@ function setupPage(storeId, returnUrl) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Finish NekoLive Creator Setup · NekoPay</title>
 <style>
-body{margin:0;background:#080b12;color:#eef2ff;font-family:Inter,system-ui,sans-serif;min-height:100vh;display:grid;place-items:center}.card{width:min(680px,calc(100% - 32px));background:#111827;border:1px solid #273449;border-radius:18px;padding:28px;box-shadow:0 24px 80px #0008}h1{margin:0 0 8px}p{color:#aeb9cc;line-height:1.55}.row{display:grid;gap:12px;margin-top:18px}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}input,button,.button{font:inherit;border-radius:10px;padding:12px 14px;border:1px solid #344258;background:#0b1220;color:#fff;text-decoration:none}button,.primary{background:#7ddc5b;color:#071006;font-weight:800;border:0;cursor:pointer}.secondary{background:#182235;color:#eef2ff}.muted{font-size:13px;color:#8794aa}.error{color:#ff9da4;white-space:pre-wrap}.ok{color:#9fe789}.status{margin-top:18px;padding:15px;border:1px solid #273449;border-radius:12px;background:#0b1220}.methods{margin-top:8px;color:#cbd5e1}</style></head>
-<body><main class="card"><h1>Finish NekoPay Setup</h1><p>This setup belongs to your linked NekoLive creator store. Configure at least one payment gateway or payout wallet. NekoLive will keep Subscribe, Tip and NyaTreat hidden until NekoPay reports the store as ready.</p><div id="root">Loading…</div></main>
+body{margin:0;background:#080b12;color:#eef2ff;font-family:Inter,system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px 0}.card{width:min(760px,calc(100% - 32px));background:#111827;border:1px solid #273449;border-radius:18px;padding:28px;box-shadow:0 24px 80px #0008}h1,h2{margin:0 0 8px}p{color:#aeb9cc;line-height:1.55}.row{display:grid;gap:12px;margin-top:18px}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}input,button,.button{font:inherit;border-radius:10px;padding:12px 14px;border:1px solid #344258;background:#0b1220;color:#fff;text-decoration:none}button,.primary{background:#7ddc5b;color:#071006;font-weight:800;border:0;cursor:pointer}.secondary{background:#182235;color:#eef2ff}.muted{font-size:13px;color:#8794aa}.error{color:#ff9da4;white-space:pre-wrap}.ok{color:#9fe789}.status,.provider{margin-top:18px;padding:15px;border:1px solid #273449;border-radius:12px;background:#0b1220}.methods{margin-top:8px;color:#cbd5e1}code{display:block;margin-top:7px;padding:9px;border-radius:8px;background:#060a12;color:#c7f9b5;overflow-wrap:anywhere}.provider h3{margin:0 0 6px}.provider ul{color:#aeb9cc;margin:8px 0;padding-left:20px}</style></head>
+<body><main class="card"><h1>Finish NekoPay Setup</h1><p>This setup belongs to your linked NekoLive creator store. Configure at least one usable payment method. NekoLive automatically supplies its own creator-payment callback; you do not paste the NekoLive webhook into your gateway provider.</p><div id="root">Loading…</div></main>
 <script>
 const storeId=${encodedStoreId};const returnUrl=${encodedReturnUrl};const root=document.getElementById('root');let pollTimer=null;
 async function json(url,opt={}){const r=await fetch(url,{...opt,headers:{'Content-Type':'application/json',...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||d.message||('HTTP '+r.status));return d}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function login(){root.innerHTML='<form id="login" class="row"><p>You need to sign in to the NekoPay account that owns the linked store.</p><input id="email" type="email" placeholder="NekoPay email" required><input id="password" type="password" placeholder="Password" required><button>Sign in to NekoPay</button><div id="msg" class="error"></div></form>';document.getElementById('login').onsubmit=async e=>{e.preventDefault();try{await json('/api/auth/login',{method:'POST',body:JSON.stringify({email:email.value,password:password.value})});await load()}catch(err){msg.textContent=err.message}}}
 function gatewayUrl(){return '/dashboard?storeId='+encodeURIComponent(storeId)}
-async function check(){try{const d=await json('/api/creator/integrations/nekolive/setup/status?storeId='+encodeURIComponent(storeId));const box=document.getElementById('setupStatus');if(!box)return;if(d.ready){box.innerHTML='<div class="ok"><b>Setup complete.</b> NekoPay found '+d.configuredGateways.length+' configured payment method'+(d.configuredGateways.length===1?'':'s')+'.</div><div class="methods">'+d.configuredGateways.map(esc).join(', ')+'</div>';document.getElementById('returnButton').hidden=!returnUrl;document.getElementById('checkButton').textContent='Setup is ready';document.getElementById('checkButton').disabled=true;if(pollTimer){clearInterval(pollTimer);pollTimer=null}}else{box.innerHTML='<div><b>Setup not finished yet.</b></div><div class="muted">Save at least one gateway or payout wallet in Gateway config, then this page will detect it automatically.</div>';}}catch(e){const box=document.getElementById('setupStatus');if(box)box.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
-async function load(){try{const me=await json('/api/auth/me');if(!me.user)return login();const store=(me.stores||[]).find(s=>String(s.id)===String(storeId));if(!store){root.innerHTML='<p class="error">The linked creator store was not found in this NekoPay account. Sign into the account that owns the linked store.</p>';return}root.innerHTML='<div class="status"><div><b>Linked store:</b> '+esc(store.name||store.slug||store.id)+'</div><div class="muted">Store ID '+esc(store.id)+'</div></div><div id="setupStatus" class="status">Checking setup…</div><div class="actions"><a class="button primary" href="'+gatewayUrl()+'" target="_blank" rel="noopener">Open Gateway Settings</a><button id="checkButton" class="secondary">Check setup now</button><a id="returnButton" class="button secondary" href="'+esc(returnUrl)+'" hidden>Return to NekoLive</a></div><p class="muted">Gateway Settings opens in a new tab so this page can automatically detect when you save a payment method.</p>';document.getElementById('checkButton').onclick=check;await check();if(!pollTimer)pollTimer=setInterval(check,3000)}catch(e){root.innerHTML='<p class="error">'+esc(e.message)+'</p>'}}
+function providerHelp(d){const hook=encodeURIComponent(d.store?.hookId||'');const origin=location.origin;return '<div class="provider"><h2>Provider webhooks</h2><p>Only configure the provider you actually use. Direct-chain wallet payments do not need one of these provider webhooks.</p><div class="provider"><h3>Stripe</h3><p>Add this endpoint in Stripe Developers → Webhooks:</p><code>'+esc(origin+'/webhooks/stripe/'+hook)+'</code><ul><li>Event: <b>checkout.session.completed</b></li><li>Copy the Stripe signing secret (whsec_...) into NekoPay → Stripe webhook secret.</li></ul></div><div class="provider"><h3>PayPal</h3><p>Add this endpoint in the PayPal app webhook settings:</p><code>'+esc(origin+'/webhooks/paypal/'+hook)+'</code><ul><li>Use CHECKOUT.ORDER.APPROVED and PAYMENT.CAPTURE.COMPLETED.</li><li>Copy the PayPal Webhook ID into NekoPay → PayPal webhook ID.</li></ul></div><div class="provider"><h3>NOWPayments</h3><p>Set this as the NOWPayments IPN callback URL:</p><code>'+esc(origin+'/webhooks/nowpayments/'+hook)+'</code><ul><li>Copy the IPN secret into NekoPay → NOWPayments IPN secret.</li></ul></div><p class="muted"><b>NekoPay → NekoLive is automatic.</b> Creator checkouts already send their completion callback to NekoLive with a server-side secret.</p></div>'}
+async function check(){try{const d=await json('/api/creator/integrations/nekolive/setup/status?storeId='+encodeURIComponent(storeId));const box=document.getElementById('setupStatus');if(!box)return;const help=document.getElementById('providerHelp');if(help)help.innerHTML=providerHelp(d);if(d.ready){box.innerHTML='<div class="ok"><b>Setup complete.</b> NekoPay found '+d.configuredGateways.length+' fully configured payment method'+(d.configuredGateways.length===1?'':'s')+'.</div><div class="methods">'+d.configuredGateways.map(esc).join(', ')+'</div>';document.getElementById('returnButton').hidden=!returnUrl;document.getElementById('checkButton').textContent='Setup is ready';document.getElementById('checkButton').disabled=true;if(pollTimer){clearInterval(pollTimer);pollTimer=null}}else{box.innerHTML='<div><b>Setup not finished yet.</b></div><div class="muted">Save at least one complete payment method. Stripe requires its webhook signing secret, PayPal requires its Webhook ID, and NOWPayments requires its IPN secret before those methods count as Ready.</div>';}}catch(e){const box=document.getElementById('setupStatus');if(box)box.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
+async function load(){try{const me=await json('/api/auth/me');if(!me.user)return login();const store=(me.stores||[]).find(s=>String(s.id)===String(storeId));if(!store){root.innerHTML='<p class="error">The linked creator store was not found in this NekoPay account. Sign into the account that owns the linked store.</p>';return}root.innerHTML='<div class="status"><div><b>Linked store:</b> '+esc(store.name||store.slug||store.id)+'</div><div class="muted">Store ID '+esc(store.id)+'</div></div><div id="setupStatus" class="status">Checking setup…</div><div class="actions"><a class="button primary" href="'+gatewayUrl()+'" target="_blank" rel="noopener">Open Gateway Settings</a><button id="checkButton" class="secondary">Check setup now</button><a id="returnButton" class="button secondary" href="'+esc(returnUrl)+'" hidden>Return to NekoLive</a></div><div id="providerHelp"></div>';document.getElementById('checkButton').onclick=check;await check();if(!pollTimer)pollTimer=setInterval(check,3000)}catch(e){root.innerHTML='<p class="error">'+esc(e.message)+'</p>'}}
 load();
 </script></body></html>`;
 }
