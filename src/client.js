@@ -18,13 +18,14 @@ class NekoPayClient {
     if (!this.serviceApiKey) throw new Error('NekoPay service API key is not configured');
     return {
       Authorization: `Bearer ${this.serviceApiKey}`,
-      'x-nekolive-service-key': this.serviceApiKey
+      'x-nekolive-service-key': this.serviceApiKey,
+      'x-nekopay-service-key': this.serviceApiKey
     };
   }
 
-  async request(method, path, data) {
+  async request(method, path, data, params) {
     try {
-      const response = await this.http.request({ method, url: path, data, headers: this.serviceHeaders() });
+      const response = await this.http.request({ method, url: path, data, params, headers: this.serviceHeaders() });
       return response.data;
     } catch (error) {
       const message = error.response?.data?.error || error.response?.data?.message || error.message;
@@ -39,7 +40,11 @@ class NekoPayClient {
   creatorStatus(creatorId) { return this.request('post', '/api/creator/integrations/nekolive/status', { creatorId }); }
   unlinkCreator(payload) { return this.request('post', '/api/creator/integrations/nekolive/unlink', payload); }
   createCreatorCheckout(payload) { return this.request('post', '/api/creator/checkout-sessions', payload); }
-  verifyTransaction(payload) { return this.request('post', '/api/verification/transaction', payload); }
+  verifyTransaction(payload) { return this.request('post', '/api/network/verify', payload); }
+  networkSymbols() { return this.request('get', '/api/network/symbols'); }
+  networkStatus(symbol, params = {}) { return this.request('get', `/api/network/status/${encodeURIComponent(symbol)}`, undefined, params); }
+  networkAddress(symbol, address) { return this.request('get', `/api/network/address/${encodeURIComponent(symbol)}/${encodeURIComponent(address)}`); }
+  networkHistory(symbol, address, params = {}) { return this.request('get', `/api/network/history/${encodeURIComponent(symbol)}/${encodeURIComponent(address)}`, undefined, params); }
 }
 
 module.exports = { NekoPayClient };
