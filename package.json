@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node creator-bootstrap.js",
     "dev": "node --watch creator-bootstrap.js",
-    "test": "node --check index.js && node --check creator-bootstrap.js && node --check src/client.js && node --check src/routes/creator-api.js && node --check src/services/creator-integrations.js && node --check src/compat/chain-modules.js"
+    "test": "node --check index.js && node --check creator-bootstrap.js && node --check src/client.js && node --check src/routes/creator-api.js && node --check src/services/creator-integrations.js && node --check src/compat/chain-modules.js && node --check src/compat/antelope-modules.js"
   },
   "keywords": [
     "nekopay",
