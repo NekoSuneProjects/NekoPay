@@ -43,8 +43,14 @@ function createNetworkRouter() {
       const sdk = require('../../index');
       const Module = sdk[`${symbol}Module`];
       if (!Module) return res.status(400).json({ error: `Unsupported verification network: ${symbol}` });
-      const amount = Number(req.body.amount);
-      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be greater than zero' });
+
+      // Keep user/payment amounts as decimal strings all the way into the verifier. Turning a
+      // token amount into a JS Number first can silently lose atomic-unit precision.
+      const amount = String(req.body.amount ?? '').trim();
+      if (!/^\d+(?:\.\d+)?$/.test(amount) || Number(amount) <= 0) {
+        return res.status(400).json({ error: 'amount must be greater than zero' });
+      }
+
       const verifier = new Module({
         ...(req.body.backendUrl || req.body.rpcUrl || req.body.explorerUrl
           ? { url: req.body.backendUrl || req.body.rpcUrl || req.body.explorerUrl }
