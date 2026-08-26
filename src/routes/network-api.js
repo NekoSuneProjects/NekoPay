@@ -36,6 +36,36 @@ function createNetworkRouter() {
     });
   });
 
+  router.post('/api/network/verify', express.json({ limit: '128kb' }), async (req, res) => {
+    try {
+      const symbol = String(req.body.network || req.body.chain || req.body.symbol || '').trim().toUpperCase();
+      if (!symbol) return res.status(400).json({ error: 'network/chain is required' });
+      const sdk = require('../../index');
+      const Module = sdk[`${symbol}Module`];
+      if (!Module) return res.status(400).json({ error: `Unsupported verification network: ${symbol}` });
+      const amount = Number(req.body.amount);
+      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be greater than zero' });
+      const verifier = new Module({
+        ...(req.body.backendUrl || req.body.rpcUrl || req.body.explorerUrl
+          ? { url: req.body.backendUrl || req.body.rpcUrl || req.body.explorerUrl }
+          : {}),
+        ...(Array.isArray(req.body.altBackendUrls) ? { altExplorerUrls: req.body.altBackendUrls } : {}),
+        ...(req.body.tokenContract ? { tokenContract: req.body.tokenContract } : {}),
+        ...(req.body.decimals != null ? { decimals: Number(req.body.decimals) } : {})
+      });
+      const result = await verifier.existsTransaction(
+        req.body.address || req.body.account,
+        amount,
+        req.body.timestamp,
+        req.body.memo || req.body.reference || null,
+        Number(req.body.minimumConfirmations || 0)
+      );
+      res.json({ network: symbol, ...result });
+    } catch (error) {
+      res.status(Number(error.status || 400)).json({ error: error.message });
+    }
+  });
+
   router.get('/api/network/status/:symbol', async (req, res) => {
     try {
       res.json(await network.getBackendStatus(req.params.symbol, {
