@@ -1,6 +1,5 @@
 'use strict';
 
-const { ChainModule } = require('./chain-modules');
 const network = require('../network');
 
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -9,6 +8,16 @@ const DEFAULT_EVM_SCAN_BLOCKS = Number(process.env.NEKOPAY_EVM_SCAN_MAX_BLOCKS |
 function normalizeTimestamp(value) {
   const number = Number(value || 0);
   return number > 1e12 ? Math.floor(number / 1000) : number;
+}
+
+function normalizeLegacyArgs(timestamp, memo, minimumConfirmations) {
+  if (typeof timestamp === 'string' && timestamp && !/^\d+(?:\.\d+)?$/.test(timestamp) && Number.isFinite(Number(memo))) {
+    return { timestamp: Number(memo), memo: timestamp, minimumConfirmations: Number(minimumConfirmations || 0) };
+  }
+  if (typeof memo === 'number' && !minimumConfirmations) {
+    return { timestamp, memo: null, minimumConfirmations: Number(memo) };
+  }
+  return { timestamp, memo, minimumConfirmations: Number(minimumConfirmations || 0) };
 }
 
 function decimalToUnits(value, decimals) {
@@ -122,45 +131,122 @@ class RpcEvmModule {
   constructor(symbol, overrides = {}) {
     this.symbol = network.canonicalSymbol(symbol);
     this.tokenContract = overrides.tokenContract || overrides.contract || null;
-    this.decimals = Number(overrides.decimals ?? (this.tokenContract ? 18 : 18));
+    this.decimals = Number(overrides.decimals ?? 18);
     this.backendUrl = overrides.url || null;
   }
 
   async existsTransaction(address, amount, timestamp, memo = null, minimumConfirmations = 0) {
     if (!address) throw new Error('Payment address is required');
-    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) throw new Error('Payment amount must be greater than zero');
-    if (typeof timestamp === 'string' && timestamp && !/^\d+(?:\.\d+)?$/.test(timestamp) && Number.isFinite(Number(memo))) {
-      [timestamp, memo] = [memo, timestamp];
+    if (!/^\d+(?:\.\d+)?$/.test(String(amount ?? '').trim()) || Number(amount) <= 0) {
+      throw new Error('Payment amount must be greater than zero');
     }
-    if (typeof memo === 'number' && !minimumConfirmations) {
-      minimumConfirmations = memo;
-      memo = null;
-    }
-    const since = normalizeTimestamp(timestamp);
+    const args = normalizeLegacyArgs(timestamp, memo, minimumConfirmations);
+    const since = normalizeTimestamp(args.timestamp);
     const units = decimalToUnits(amount, this.decimals);
     return network.read(this.symbol, async (client) => {
       if (this.tokenContract) {
-        return verifyRpcToken(client, address, this.tokenContract, units, since, minimumConfirmations);
+        return verifyRpcToken(client, address, this.tokenContract, units, since, args.minimumConfirmations);
       }
-      const indexed = await verifyIndexedNative(this.symbol, client, address, units, since, minimumConfirmations).catch(() => null);
-      return indexed || verifyRpcNative(client, address, units, since, minimumConfirmations);
+      const indexed = await verifyIndexedNative(this.symbol, client, address, units, since, args.minimumConfirmations).catch(() => null);
+      return indexed || verifyRpcNative(client, address, units, since, args.minimumConfirmations);
+    }, { url: this.backendUrl });
+  }
+}
+
+function transactionTimestamp(transaction) {
+  return Number(
+    transaction?.blockTime
+    ?? transaction?.blocktime
+    ?? transaction?.time
+    ?? transaction?.timestamp
+    ?? 0
+  );
+}
+
+function outputAddresses(output) {
+  if (Array.isArray(output?.addresses)) return output.addresses.map(String);
+  if (Array.isArray(output?.scriptPubKey?.addresses)) return output.scriptPubKey.addresses.map(String);
+  if (output?.address) return [String(output.address)];
+  return [];
+}
+
+function outputAtomicValue(output, decimals) {
+  const raw = output?.value ?? output?.valueSat ?? output?.satoshis ?? null;
+  if (raw == null) return null;
+  const text = String(raw).trim();
+  if (/^\d+$/.test(text)) return BigInt(text);
+  if (/^\d+\.\d+$/.test(text)) return decimalToUnits(text, decimals);
+  return null;
+}
+
+async function hydrateBlockbookTransaction(client, reference) {
+  if (reference && typeof reference === 'object' && Array.isArray(reference.vout)) return reference;
+  const txid = typeof reference === 'string' ? reference : reference?.txid || reference?.hash;
+  if (!txid) return reference;
+  return client.tx(txid);
+}
+
+class RpcBlockbookModule {
+  constructor(symbol, overrides = {}) {
+    this.symbol = network.canonicalSymbol(symbol);
+    this.decimals = Number(overrides.decimals ?? 8);
+    this.backendUrl = overrides.url || null;
+  }
+
+  async existsTransaction(address, amount, timestamp, memo = null, minimumConfirmations = 0) {
+    if (!address) throw new Error('Payment address is required');
+    if (!/^\d+(?:\.\d+)?$/.test(String(amount ?? '').trim()) || Number(amount) <= 0) {
+      throw new Error('Payment amount must be greater than zero');
+    }
+    const args = normalizeLegacyArgs(timestamp, memo, minimumConfirmations);
+    const since = normalizeTimestamp(args.timestamp);
+    const expectedUnits = decimalToUnits(amount, this.decimals);
+    const expectedAddress = String(address).toLowerCase();
+
+    return network.read(this.symbol, async (client) => {
+      for (let page = 1; page <= 5; page += 1) {
+        const payload = await client.address(address, { page, pageSize: 100, details: 'txs' });
+        const references = Array.isArray(payload?.transactions)
+          ? payload.transactions
+          : Array.isArray(payload?.txs)
+            ? payload.txs
+            : [];
+        if (!references.length) break;
+
+        let oldest = Number.POSITIVE_INFINITY;
+        for (const reference of references) {
+          const transaction = await hydrateBlockbookTransaction(client, reference);
+          const txTime = transactionTimestamp(transaction);
+          if (txTime > 0) oldest = Math.min(oldest, txTime);
+          if (since && txTime && txTime < since) continue;
+
+          const matched = (transaction?.vout || []).some((output) => {
+            const addresses = outputAddresses(output).map((value) => value.toLowerCase());
+            if (!addresses.includes(expectedAddress)) return false;
+            const atomic = outputAtomicValue(output, this.decimals);
+            return atomic != null && atomic === expectedUnits;
+          });
+          if (!matched) continue;
+
+          const conf = Number(transaction?.confirmations || 0);
+          return {
+            exists: conf >= Number(args.minimumConfirmations || 0),
+            txid: transaction?.txid || transaction?.hash || '',
+            conf,
+            raw: transaction
+          };
+        }
+
+        if (references.length < 100 || (since && Number.isFinite(oldest) && oldest < since)) break;
+      }
+      return { exists: false, txid: '', conf: 0 };
     }, { url: this.backendUrl });
   }
 }
 
 function blockbookModule(symbol, decimals = 8) {
-  return class extends ChainModule {
-    constructor(overrides = {}) {
-      const config = network.getBackendConfig(symbol);
-      const urls = config.backends.map((entry) => entry.url);
-      super(String(symbol).toLowerCase(), {
-        ...overrides,
-        kind: 'blockbook',
-        decimals: Number(overrides.decimals ?? decimals),
-        url: overrides.url || urls[0],
-        altExplorerUrls: overrides.altExplorerUrls || urls.slice(1)
-      });
-    }
+  return class extends RpcBlockbookModule {
+    constructor(overrides = {}) { super(symbol, { decimals, ...overrides }); }
   };
 }
 
@@ -172,6 +258,7 @@ function evmModule(symbol) {
 
 module.exports = {
   RpcEvmModule,
+  RpcBlockbookModule,
   BTCModule: blockbookModule('BTC'),
   LTCModule: blockbookModule('LTC'),
   DOGEModule: blockbookModule('DOGE'),
