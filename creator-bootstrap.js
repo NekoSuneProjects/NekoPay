@@ -12,14 +12,15 @@ for (const tokenId of ['trx', 'usdt_trx', 'tusd_trx']) {
 }
 
 // Keep server.js focused on the existing merchant application. This bootstrap mounts
-// creator/platform and network-management routers before server.js registers its normal
-// routes, then starts the existing merchant server. NekoPay stays one process with two modes.
+// creator/platform, network-management and local-wallet helpers before server.js registers
+// its normal routes, then starts the existing merchant server. NekoPay stays one process.
 const express = require('express');
 const { createCreatorRouter } = require('./src/routes/creator-api');
 const { createNetworkRouter } = require('./src/routes/network-api');
+const { createWalletRouter } = require('./src/routes/wallet-api');
 const { startNekoLiveWebhookRecovery } = require('./src/services/nekolive-webhook-recovery');
 
-const bootstrapRouters = [createCreatorRouter(), createNetworkRouter()];
+const bootstrapRouters = [createCreatorRouter(), createNetworkRouter(), createWalletRouter()];
 const originalUse = express.application.use;
 let mounted = false;
 
