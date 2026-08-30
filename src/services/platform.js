@@ -21,6 +21,7 @@ const { createHostedGatewayPayment, checkHostedGatewayStatus } = require('./host
 const { convertAmount, quoteTokenAmount } = require('./pricing');
 const { sendMerchantWebhook } = require('./outbound-webhooks');
 const { existsEvmTransaction } = require('./evm');
+const { existsTronTransaction } = require('./tron');
 const { existsSolanaTransaction, createSolanaPayRequest } = require('./solana');
 const { quoteSatsFromFiat, createZbdCharge } = require('./zbd');
 
@@ -58,6 +59,10 @@ function getTokenWalletKey(methodId) {
 
 function isEvmMethod(methodId) {
   return getTokenConfig(methodId)?.chainType === 'evm';
+}
+
+function isTronMethod(methodId) {
+  return getTokenConfig(methodId)?.chainType === 'tron';
 }
 
 function isSolanaMethod(methodId) {
@@ -104,6 +109,7 @@ function sanitizeStore(store) {
       ethAddress: store.wallets?.ethAddress || '',
       polAddress: store.wallets?.polAddress || '',
       bnbAddress: store.wallets?.bnbAddress || '',
+      trxAddress: store.wallets?.trxAddress || '',
       solAddress: store.wallets?.solAddress || '',
       tlosAddress: store.wallets?.tlosAddress || '',
       eosAddress: store.wallets?.eosAddress || '',
@@ -159,6 +165,12 @@ function deriveGatewayState(secrets = {}, wallets = {}, hosted = {}) {
     usdc_eth: Boolean(getTokenConfig('usdc_eth') && wallets.ethAddress),
     usdt_bnb: Boolean(getTokenConfig('usdt_bnb') && wallets.bnbAddress),
     usdc_bnb: Boolean(getTokenConfig('usdc_bnb') && wallets.bnbAddress),
+    dai_eth: Boolean(getTokenConfig('dai_eth') && wallets.ethAddress),
+    dai_pol: Boolean(getTokenConfig('dai_pol') && wallets.polAddress),
+    usdc_e_pol: Boolean(getTokenConfig('usdc_e_pol') && wallets.polAddress),
+    trx: Boolean(getTokenConfig('trx') && wallets.trxAddress),
+    usdt_trx: Boolean(getTokenConfig('usdt_trx') && wallets.trxAddress),
+    tusd_trx: Boolean(getTokenConfig('tusd_trx') && wallets.trxAddress),
     sol: Boolean(getTokenConfig('sol') && wallets.solAddress),
     usdc_sol: Boolean(getTokenConfig('usdc_sol') && wallets.solAddress),
     usdt_sol: Boolean(getTokenConfig('usdt_sol') && wallets.solAddress),
@@ -254,6 +266,7 @@ function buildWalletPayload(input) {
     ethAddress: input.ethAddress || '',
     polAddress: input.polAddress || '',
     bnbAddress: input.bnbAddress || '',
+    trxAddress: input.trxAddress || '',
     solAddress: input.solAddress || '',
     tlosAddress: input.tlosAddress || '',
     eosAddress: input.eosAddress || '',
@@ -288,6 +301,7 @@ function decryptStoreConfig(store) {
       ethAddress: store.wallets?.ethAddress || '',
       polAddress: store.wallets?.polAddress || '',
       bnbAddress: store.wallets?.bnbAddress || '',
+      trxAddress: store.wallets?.trxAddress || '',
       solAddress: store.wallets?.solAddress || '',
       tlosAddress: store.wallets?.tlosAddress || '',
       eosAddress: store.wallets?.eosAddress || '',
@@ -455,6 +469,16 @@ async function checkSupportedOnchainTransaction(attempt, createdAt) {
 
   if (isEvmMethod(attempt.methodId)) {
     return existsEvmTransaction(
+      attempt.instructions.address,
+      attempt.instructions.amount,
+      createdAt,
+      tokenConfig,
+      minimumConfirmations
+    );
+  }
+
+  if (isTronMethod(attempt.methodId)) {
+    return existsTronTransaction(
       attempt.instructions.address,
       attempt.instructions.amount,
       createdAt,
@@ -725,6 +749,7 @@ async function updateStore(storeId, userId, payload) {
     ethAddress: payload.wallets?.ethAddress ?? store.wallets?.ethAddress ?? '',
     polAddress: payload.wallets?.polAddress ?? store.wallets?.polAddress ?? '',
     bnbAddress: payload.wallets?.bnbAddress ?? store.wallets?.bnbAddress ?? '',
+    trxAddress: payload.wallets?.trxAddress ?? store.wallets?.trxAddress ?? '',
     solAddress: payload.wallets?.solAddress ?? store.wallets?.solAddress ?? '',
     tlosAddress: payload.wallets?.tlosAddress ?? store.wallets?.tlosAddress ?? '',
     eosAddress: payload.wallets?.eosAddress ?? store.wallets?.eosAddress ?? '',

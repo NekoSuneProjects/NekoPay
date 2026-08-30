@@ -229,6 +229,133 @@ const supportedTokens = {
   fls: { symbol: 'fls', label: 'FLS', memo: false, decimals: 8 }
 };
 
+
+// Direct-chain methods. Existing EVM entries above were previously kept disabled while
+// NekoPay depended on unreliable explorer APIs. The verifier now uses the RPC backend pool,
+// so ETH / Polygon / BNB direct payments and their token transfers can be enabled safely.
+Object.assign(supportedTokens, {
+  usdc_e_pol: {
+    enabled: true,
+    symbol: 'usdc_e_pol',
+    label: 'USDC.e Polygon (bridged)',
+    memo: false,
+    decimals: 6,
+    walletKey: 'polAddress',
+    chainType: 'evm',
+    network: 'Polygon',
+    priceId: 'usd-coin',
+    invoiceSymbol: 'USDC.e',
+    contract: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+    note: 'Legacy bridged USDC.e on Polygon'
+  },
+  dai_eth: {
+    enabled: true,
+    symbol: 'dai_eth',
+    label: 'DAI Ethereum',
+    memo: false,
+    decimals: 18,
+    walletKey: 'ethAddress',
+    chainType: 'evm',
+    network: 'Ethereum',
+    priceId: 'dai',
+    invoiceSymbol: 'DAI',
+    contract: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    note: 'DAI on Ethereum'
+  },
+  dai_pol: {
+    enabled: true,
+    symbol: 'dai_pol',
+    label: 'DAI Polygon',
+    memo: false,
+    decimals: 18,
+    walletKey: 'polAddress',
+    chainType: 'evm',
+    network: 'Polygon',
+    priceId: 'dai',
+    invoiceSymbol: 'DAI',
+    contract: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
+    note: 'PoS DAI on Polygon'
+  },
+  trx: {
+    enabled: true,
+    symbol: 'trx',
+    label: 'TRON',
+    memo: false,
+    decimals: 6,
+    walletKey: 'trxAddress',
+    chainType: 'tron',
+    network: 'TRON',
+    priceId: 'tron',
+    invoiceSymbol: 'TRX',
+    note: 'Native TRX',
+    minimumConfirmations: 1
+  },
+  usdt_trx: {
+    enabled: true,
+    symbol: 'usdt_trx',
+    label: 'USDT TRON (TRC-20)',
+    memo: false,
+    decimals: 6,
+    walletKey: 'trxAddress',
+    chainType: 'tron',
+    network: 'TRON',
+    priceId: 'tether',
+    invoiceSymbol: 'USDT',
+    contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+    note: 'Official Tether USDt on TRON (TRC-20)',
+    minimumConfirmations: 1
+  },
+  tusd_trx: {
+    enabled: true,
+    symbol: 'tusd_trx',
+    label: 'TUSD TRON (TRC-20)',
+    memo: false,
+    decimals: 18,
+    walletKey: 'trxAddress',
+    chainType: 'tron',
+    network: 'TRON',
+    priceId: 'true-usd',
+    invoiceSymbol: 'TUSD',
+    contract: 'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4',
+    note: 'TrueUSD on TRON (TRC-20)',
+    minimumConfirmations: 1
+  }
+});
+
+for (const tokenId of [
+  'eth', 'pol', 'bnb', 'myst',
+  'usdt_pol', 'usdc_pol', 'usdt_eth', 'usdc_eth', 'usdt_bnb', 'usdc_bnb'
+]) {
+  supportedTokens[tokenId].enabled = true;
+}
+
+// Circle native USDC on Polygon. Keep the old bridged 0x2791... token separately as
+// usdc_e_pol so existing Polygon users can still intentionally select USDC.e.
+Object.assign(supportedTokens.usdc_pol, {
+  label: 'USDC Polygon (native)',
+  contract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+  note: 'Native Circle USDC on Polygon'
+});
+
+Object.assign(supportedTokens.usdt_bnb, {
+  label: 'Binance-Peg USDT (BNB Chain)',
+  note: 'Binance-Peg USDT on BNB Chain'
+});
+Object.assign(supportedTokens.usdc_bnb, {
+  label: 'Binance-Peg USDC (BNB Chain)',
+  note: 'Binance-Peg USDC on BNB Chain'
+});
+
+for (const tokenId of ['eth', 'usdt_eth', 'usdc_eth', 'dai_eth']) {
+  supportedTokens[tokenId].minimumConfirmations = 12;
+}
+for (const tokenId of ['pol', 'myst', 'usdt_pol', 'usdc_pol', 'usdc_e_pol', 'dai_pol']) {
+  supportedTokens[tokenId].minimumConfirmations = 20;
+}
+for (const tokenId of ['bnb', 'usdt_bnb', 'usdc_bnb']) {
+  supportedTokens[tokenId].minimumConfirmations = 15;
+}
+
 const defaultProducts = [
   {
     id: 'starter-crates',
