@@ -513,3 +513,19 @@ Every contribution helps us continue building and maintaining open-source softwa
 ## License
 
 No formal license has been defined in this repository yet.
+
+## Direct EVM + TRON stablecoin payments
+
+NekoPay can accept direct-to-merchant-wallet payments without custodying merchant private keys.
+Configure one receiving address per network in the dashboard and the checkout automatically exposes
+the enabled native assets and tokens for that network.
+
+- Ethereum: ETH, USDC, USDT, DAI
+- Polygon: POL, native USDC, USDC.e, USDT, DAI, MYST
+- BNB Chain: BNB, Binance-Peg USDC, Binance-Peg USDT
+- TRON: TRX, TRC-20 USDT, TRC-20 TUSD
+
+For TRON production deployments, set `TRON_PRO_API_KEY` (and optionally `TRON_API_URL`). Circle
+ended USDC support on TRON, so NekoPay intentionally does not advertise a TRON USDC payment method.
+Each token payment is verified against its expected contract, receiving address, exact quoted amount,
+payment creation time, and the configured confirmation target.

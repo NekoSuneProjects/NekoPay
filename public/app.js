@@ -19,6 +19,7 @@ const walletGatewayFields = [
   ['ethAddress', 'ETH address'],
   ['polAddress', 'POL address'],
   ['bnbAddress', 'BNB address'],
+  ['trxAddress', 'TRON address'],
   ['solAddress', 'SOL address'],
   ['tlosAddress', 'Telos account'],
   ['eosAddress', 'EOS account'],
@@ -596,8 +597,8 @@ async function merchantPage() {
             </div>
             <div class="rounded-3xl border border-white/10 bg-black/20 p-4">
               <div class="text-white">Direct-chain crypto</div>
-              <div class="mt-2">Hive, HBD, Steem, SBD, Blurt, Telos, EOS, FIO, WAX, PIVX, and FLS do not need provider webhooks here. NekoPay checks the chain/payment state directly.</div>
-              <div class="mt-3">EVM methods are temporarily disabled right now because the explorer API is blocking requests.</div>
+              <div class="mt-2">Direct-chain payments do not need provider webhooks. NekoPay verifies ETH, Polygon, BNB Chain, TRON, Solana, and the other supported chains directly.</div>
+              <div class="mt-3">ETH / Polygon / BNB use the RPC fallback pool. TRON uses TronGrid; set <code class="text-white">TRON_PRO_API_KEY</code> on the NekoPay server for production rate limits.</div>
             </div>
           </div>
         </div>
