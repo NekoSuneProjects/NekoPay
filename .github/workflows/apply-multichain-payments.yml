@@ -1,0 +1,50 @@
+name: Apply multichain payment update
+
+on:
+  push:
+    branches:
+      - feature/multichain-stablecoin-payments
+    paths:
+      - .github/scripts/apply_multichain.py
+      - .github/workflows/apply-multichain-payments.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Apply multichain changes
+        run: python3 .github/scripts/apply_multichain.py
+
+      - name: Check patch whitespace
+        run: git diff --check
+
+      - name: Run NekoPay syntax tests
+        run: npm test
+
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "feat(payments): enable EVM and TRON stablecoins"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
