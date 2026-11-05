@@ -11,6 +11,31 @@
 // rather than crashing.
 
 const axios = require('axios');
+
+// The published Heleket SDK is ESM; this application is CommonJS.
+let heleketSDK;
+async function heleketClient(creds) {
+  if (!heleketSDK) heleketSDK = import('@heleket-payment/sdk');
+  const { HeleketPayment } = await heleketSDK;
+  return new HeleketPayment(creds.merchantId, creds.paymentKey);
+}
+
+const HELEKET_PAID = new Set(['paid', 'paid_over']);
+const HELEKET_FAILED = new Set(['fail', 'cancel', 'system_fail', 'wrong_amount', 'locked']);
+function heleketResult(info) {
+  const status = String(info?.payment_status || '').toLowerCase();
+  return { completed: HELEKET_PAID.has(status) && info?.is_final === true,
+    failed: HELEKET_FAILED.has(status) && info?.is_final === true,
+    status: status || 'pending', raw: info };
+}
+function heleketOrderId(reference) {
+  // Heleket order_id only permits ASCII alphanumeric, underscores and hyphens.
+  // Checkout/session IDs can include other punctuation, so canonicalize consistently.
+  const value = String(reference || '').replace(/[^A-Za-z0-9_-]/g, '_');
+  if (!value || value.length > 128) throw new Error('Invalid Heleket order reference');
+  return value;
+}
+
 const { getGatewayCatalogEntry } = require('../config/gateways');
 
 // Statuses (lowercased) that mean "the customer has paid / is paying".
@@ -231,6 +256,37 @@ async function createHostedGatewayPayment(ctx) {
   }
 
   let data;
+  if (entry.adapter === 'heleket') {
+    if (process.env.HELEKET_ENABLE_LIVE !== 'true') {
+      throw new Error('Heleket live invoice creation is disabled (set HELEKET_ENABLE_LIVE=true after configuration and testing)');
+    }
+    const client = await heleketClient(creds);
+    const invoice = await client.createInvoice({
+      amount: Number(ctx.amount).toFixed(2),
+      currency: String(ctx.currency).toUpperCase(),
+      order_id: heleketOrderId(ctx.reference),
+      // Status is reconciled via the signed SDK getInfo method; a webhook route
+      // must be installed and verified before url_callback is provided.
+      url_return: ctx.cancelUrl || undefined,
+      url_success: ctx.successUrl || undefined
+    });
+    if (!invoice?.uuid || !invoice?.url) {
+      throw new Error('Heleket returned an incomplete invoice response');
+    }
+    return {
+      provider: 'heleket',
+      providerReference: invoice.uuid,
+      status: 'pending',
+      redirectUrl: invoice.url,
+      instructions: invoice.address ? {
+        address: invoice.address, amount: invoice.payer_amount || null,
+        currency: invoice.payer_currency || null
+      } : null,
+      providerPayload: { uuid: invoice.uuid, order_id: invoice.order_id,
+        payment_status: invoice.payment_status, expired_at: invoice.expired_at },
+      requiresRedirect: true
+    };
+  }
   if (entry.adapter === 'coinbase') {
     const body = {
       name: ctx.description,
@@ -288,6 +344,11 @@ async function checkHostedGatewayStatus(store, attempt, config) {
   const creds = (config.hosted && config.hosted[entry.key]) || {};
   if (!hasCredentials(entry, creds)) {
     return { completed: false, failed: false, status: 'unconfigured', raw: null };
+  }
+  if (entry.adapter === 'heleket') {
+    const client = await heleketClient(creds);
+    const info = await client.getInfo({ uuid: String(attempt.providerReference) });
+    return heleketResult(info);
   }
   const profile = entry.gatewayProfile;
   let getPath;
