@@ -115,6 +115,18 @@ const GATEWAY_DEFS = [
     auth: { scheme: 'Bearer ', env: 'PAGSEGURO_TOKEN' }
   },
 
+  // Heleket host-to-host API (official Node SDK). Live use requires approved merchant.
+  {
+    key: 'heleket', label: 'Heleket', category: 'gateway-crypto',
+    tier: 'beta', flow: 'redirect', adapter: 'heleket', verified: false,
+    baseUrl: 'https://api.heleket.com/',
+    auth: { env: 'HELEKET_PAYMENT_KEY' },
+    fields: [
+      { name: 'merchantId', label: 'Heleket Merchant ID', secret: true },
+      { name: 'paymentKey', label: 'Heleket Payment API key', secret: true }
+    ]
+  },
+
   // ---------------- Beta tier — crypto processors ----------------
   {
     key: 'bitpay', label: 'BitPay', category: 'gateway-crypto',
@@ -216,7 +228,7 @@ const HOSTED_GATEWAYS = GATEWAY_DEFS.map((entry) => ({
   deprecated: false,
   selfHosted: false,
   ...entry,
-  fields: fieldsForEntry(entry)
+  fields: entry.fields || fieldsForEntry(entry)
 }));
 
 const HOSTED_GATEWAY_MAP = HOSTED_GATEWAYS.reduce((map, entry) => {
